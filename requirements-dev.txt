@@ -1,0 +1,9 @@
+# requirements-dev.txt
+-r requirements.txt
+pytest>=6.0
+pytest-cov>=2.0
+black>=21.0
+isort>=5.0
+flake8>=3.8
+mypy>=0.910
+pre-commit>=2.15.0
