@@ -437,4 +437,292 @@ class GraphBLASGraph:
         # Get all nodes
         all_nodes = set()
         for key in self.storage.redis.keys("nodes:*"):
-            node_id = key.decode().split(":")
+            node_id = key.decode().split(":")[-1]
+            all_nodes.add(node_id)
+        
+        def dfs(node_id, comp_id):
+            if node_id in visited:
+                return
+            visited.add(node_id)
+            components[node_id] = comp_id
+            
+            if hasattr(self.storage, 'get_outgoing_edges'):
+                for edge in self.storage.get_outgoing_edges(node_id):
+                    dfs(edge.to_node, comp_id)
+                    
+                for edge in self.storage.get_incoming_edges(node_id):
+                    dfs(edge.from_node, comp_id)
+        
+        for node_id in all_nodes:
+            if node_id not in visited:
+                dfs(node_id, component_id)
+                component_id += 1
+        
+        return components
+    
+    def _traditional_pagerank(self, damping: float = 0.85, max_iter: int = 100, 
+                            tol: float = 1e-6) -> Dict[str, float]:
+        """Traditional PageRank implementation"""
+        # Get all nodes
+        all_nodes = []
+        for key in self.storage.redis.keys("nodes:*"):
+            node_id = key.decode().split(":")[-1]
+            all_nodes.append(node_id)
+        
+        if not all_nodes:
+            return {}
+        
+        n = len(all_nodes)
+        node_to_idx = {node: i for i, node in enumerate(all_nodes)}
+        
+        # Build adjacency info
+        out_links = {node: [] for node in all_nodes}
+        in_links = {node: [] for node in all_nodes}
+        
+        for node in all_nodes:
+            if hasattr(self.storage, 'get_outgoing_edges'):
+                for edge in self.storage.get_outgoing_edges(node):
+                    if edge.to_node in node_to_idx:
+                        out_links[node].append(edge.to_node)
+                        in_links[edge.to_node].append(node)
+        
+        # Initialize PageRank values
+        pr = {node: 1.0 / n for node in all_nodes}
+        
+        # Power iteration
+        for iteration in range(max_iter):
+            new_pr = {}
+            
+            for node in all_nodes:
+                rank = (1 - damping) / n
+                
+                for in_node in in_links[node]:
+                    out_degree = len(out_links[in_node])
+                    if out_degree > 0:
+                        rank += damping * pr[in_node] / out_degree
+                
+                new_pr[node] = rank
+            
+            # Check convergence
+            diff = sum(abs(new_pr[node] - pr[node]) for node in all_nodes)
+            pr = new_pr
+            
+            if diff < tol:
+                break
+        
+        return pr
+    
+    def _traditional_triangle_count(self) -> int:
+        """Traditional triangle counting"""
+        triangles = 0
+        
+        # Get all nodes
+        all_nodes = []
+        for key in self.storage.redis.keys("nodes:*"):
+            node_id = key.decode().split(":")[-1]
+            all_nodes.append(node_id)
+        
+        # For each node, check if its neighbors are connected
+        for node in all_nodes:
+            if hasattr(self.storage, 'get_outgoing_edges'):
+                neighbors = set()
+                for edge in self.storage.get_outgoing_edges(node):
+                    neighbors.add(edge.to_node)
+                
+                # Check all pairs of neighbors
+                neighbor_list = list(neighbors)
+                for i in range(len(neighbor_list)):
+                    for j in range(i + 1, len(neighbor_list)):
+                        # Check if neighbor_list[i] connects to neighbor_list[j]
+                        for edge in self.storage.get_outgoing_edges(neighbor_list[i]):
+                            if edge.to_node == neighbor_list[j]:
+                                triangles += 1
+                                break
+        
+        return triangles // 3  # Each triangle counted 3 times
+    
+    def _traditional_clustering_coefficient(self, node_id: str = None) -> Union[float, Dict[str, float]]:
+        """Traditional clustering coefficient"""
+        if node_id:
+            # Single node
+            if not hasattr(self.storage, 'get_outgoing_edges'):
+                return 0.0
+            
+            neighbors = set()
+            for edge in self.storage.get_outgoing_edges(node_id):
+                neighbors.add(edge.to_node)
+            for edge in self.storage.get_incoming_edges(node_id):
+                neighbors.add(edge.from_node)
+            
+            if len(neighbors) < 2:
+                return 0.0
+            
+            # Count edges between neighbors
+            edges_between = 0
+            neighbor_list = list(neighbors)
+            
+            for i in range(len(neighbor_list)):
+                for j in range(i + 1, len(neighbor_list)):
+                    # Check if there's an edge between neighbors
+                    for edge in self.storage.get_outgoing_edges(neighbor_list[i]):
+                        if edge.to_node == neighbor_list[j]:
+                            edges_between += 1
+                            break
+            
+            possible_edges = len(neighbors) * (len(neighbors) - 1) // 2
+            return edges_between / possible_edges if possible_edges > 0 else 0.0
+        
+        else:
+            # All nodes
+            result = {}
+            for key in self.storage.redis.keys("nodes:*"):
+                node_id = key.decode().split(":")[-1]
+                result[node_id] = self._traditional_clustering_coefficient(node_id)
+            return result
+
+
+# Factory function for easy instantiation
+def create_optimized_graph(redis_config: Dict[str, Any] = None) -> GraphBLASGraph:
+    """
+    Create an optimized MyLath graph with GraphBLAS acceleration
+    
+    Args:
+        redis_config: Redis connection configuration
+        
+    Returns:
+        GraphBLASGraph instance with maximum performance
+    """
+    if redis_config is None:
+        redis_config = {'host': 'localhost', 'port': 6379, 'db': 0}
+    
+    return GraphBLASGraph(redis_config)
+
+
+# Example usage and benchmarking
+def benchmark_graph_performance():
+    """
+    Benchmark GraphBLAS vs traditional implementation
+    Demonstrates the massive performance improvements
+    """
+    import random
+    import time
+    
+    print("MyLath GraphBLAS Performance Benchmark")
+    print("=" * 50)
+    
+    # Create optimized graph
+    graph = create_optimized_graph({'db': 13})  # Use separate DB for testing
+    
+    try:
+        # Clear any existing data
+        graph.storage.redis.flushdb()
+        
+        # Create test data
+        print("Creating test graph...")
+        nodes = []
+        for i in range(1000):
+            node = graph.create_node("person", {
+                "name": f"Person_{i}",
+                "age": random.randint(20, 70)
+            })
+            nodes.append(node)
+        
+        # Create edges
+        for i in range(5000):
+            from_node = random.choice(nodes)
+            to_node = random.choice(nodes)
+            if from_node.id != to_node.id:
+                graph.create_edge("knows", from_node.id, to_node.id)
+        
+        print(f"Created {len(nodes)} nodes and ~5000 edges")
+        
+        # Benchmark different operations
+        test_node = random.choice(nodes)
+        
+        benchmarks = [
+            ("BFS", lambda: graph.bfs(test_node.id, max_depth=5)),
+            ("3-hop neighbors", lambda: graph.k_hop_neighbors(test_node.id, 3)),
+            ("Connected components", lambda: graph.connected_components()),
+            ("PageRank", lambda: graph.pagerank(max_iter=20)),
+        ]
+        
+        results = {}
+        
+        for name, operation in benchmarks:
+            print(f"\nBenchmarking {name}...")
+            
+            # Test with GraphBLAS
+            start_time = time.time()
+            graphblas_result = operation()
+            graphblas_time = time.time() - start_time
+            
+            # Test without GraphBLAS (if possible)
+            if graph._graphblas_enabled:
+                graph._graphblas_enabled = False
+                try:
+                    start_time = time.time()
+                    traditional_result = operation()
+                    traditional_time = time.time() - start_time
+                    
+                    speedup = traditional_time / graphblas_time if graphblas_time > 0 else float('inf')
+                    
+                    results[name] = {
+                        'graphblas_time': graphblas_time,
+                        'traditional_time': traditional_time,
+                        'speedup': speedup
+                    }
+                    
+                    print(f"  GraphBLAS: {graphblas_time:.4f}s")
+                    print(f"  Traditional: {traditional_time:.4f}s")
+                    print(f"  Speedup: {speedup:.1f}x")
+                    
+                except Exception as e:
+                    print(f"  Traditional implementation error: {e}")
+                    results[name] = {
+                        'graphblas_time': graphblas_time,
+                        'traditional_error': str(e)
+                    }
+                finally:
+                    graph._graphblas_enabled = True
+            else:
+                results[name] = {'graphblas_time': graphblas_time}
+                print(f"  Time: {graphblas_time:.4f}s")
+        
+        # Summary
+        print(f"\n" + "=" * 50)
+        print("PERFORMANCE SUMMARY")
+        print("=" * 50)
+        
+        total_speedup = []
+        for name, result in results.items():
+            if 'speedup' in result:
+                print(f"{name:20}: {result['speedup']:6.1f}x faster")
+                total_speedup.append(result['speedup'])
+        
+        if total_speedup:
+            avg_speedup = sum(total_speedup) / len(total_speedup)
+            print(f"{'Average speedup':20}: {avg_speedup:6.1f}x")
+        
+        # Get detailed performance stats
+        perf_stats = graph.get_performance_stats()
+        print(f"\nMatrix operations: {perf_stats.get('matrix_operations', 0)}")
+        print(f"Matrix density: {perf_stats.get('matrix_density', 0):.6f}")
+        print(f"Memory efficiency: {perf_stats.get('memory_efficiency', 'N/A')}")
+        
+    finally:
+        # Cleanup
+        graph.storage.redis.flushdb()
+    
+    print("\nBenchmark completed! 🚀")
+
+
+if __name__ == "__main__":
+    # Run benchmark if GraphBLAS is available
+    if GRAPHBLAS_AVAILABLE:
+        benchmark_graph_performance()
+    else:
+        print("GraphBLAS not available. Install with: pip install python-graphblas")
+        print("To install GraphBLAS:")
+        print("  pip install python-graphblas")
+        print("  # or")
+        print("  conda install python-graphblas")
