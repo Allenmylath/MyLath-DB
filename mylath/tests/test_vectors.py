@@ -1,8 +1,8 @@
 # tests/test_vectors.py
 import pytest
 import numpy as np
-from mylath.storage.redis_storage import RedisStorage
-from mylath.vector.vector_core import VectorCore
+from mylath.mylath.storage.redis_storage import RedisStorage
+from mylath.mylath.vector.vector_core import VectorCore
 
 
 @pytest.fixture

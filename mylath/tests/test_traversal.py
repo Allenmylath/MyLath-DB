@@ -1,7 +1,7 @@
 # tests/test_traversal.py
 import pytest
-from mylath.storage.redis_storage import RedisStorage
-from mylath.graph.traversal import GraphTraversal
+from mylath.mylath.storage.redis_storage import RedisStorage
+from mylath.mylath.graph.traversal import GraphTraversal
 
 
 @pytest.fixture
@@ -88,9 +88,15 @@ def test_shortest_path(storage, sample_graph):
 def test_count(storage, sample_graph):
     """Test count operation"""
     traversal = GraphTraversal(storage)
-    person_count = traversal.V().has("label", "person").count()
     
+    # Use filter function to check label attribute (not property)
+    person_count = traversal.V().filter(lambda n: n.label == "person").count()
     assert person_count == 3  # Alice, Bob, Charlie
+    
+    # Alternative: count all nodes and check manually
+    all_nodes = traversal.V().to_list()
+    persons = [n for n in all_nodes if n.label == "person"]
+    assert len(persons) == 3
 
 
 def test_dedup(storage, sample_graph):
@@ -99,7 +105,7 @@ def test_dedup(storage, sample_graph):
     
     # This might create duplicates, dedup should remove them
     results = (traversal.V()
-                       .has("label", "person")
+                       .filter(lambda n: n.label == "person")
                        .out("works_at")
                        .in_("works_at")
                        .dedup()

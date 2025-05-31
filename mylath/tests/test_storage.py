@@ -1,7 +1,7 @@
 # tests/test_storage.py
 import pytest
 import redis
-from mylath.storage.redis_storage import RedisStorage, Node, Edge
+from mylath.mylath.storage.redis_storage import RedisStorage, Node, Edge
 
 
 @pytest.fixture

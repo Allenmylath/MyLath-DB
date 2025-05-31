@@ -1,8 +1,8 @@
 # tests/test_api.py
 import pytest
 import json
-from mylath.storage.redis_storage import RedisStorage
-from mylath.api.graph_api import GraphAPI
+from mylath.mylath.storage.redis_storage import RedisStorage
+from mylath.mylath.api.graph_api import GraphAPI
 
 
 @pytest.fixture

@@ -1,302 +1,338 @@
 #!/usr/bin/env python3
 """
-Direct test without complex imports - just test the core functionality
+Final Quick Vector Test for MyLath with Redis Stack Support
+Fixed to use DB=0 for Redis Stack compatibility
 """
 
-import sys
-import os
+import time
+import random
+import numpy as np
 
-# Add the mylath/mylath directory to Python path for direct imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'mylath', 'mylath'))
+# Assuming mylath package structure is accessible
+# For local testing, ensure 'mylath' is in your PYTHONPATH or run from parent directory
+from mylath.mylath.storage.redis_storage import RedisStorage
+from mylath.mylath.graph.graph import Graph # Graph class is expected to use VectorCore internally
 
-def test_redis_connection():
-    """Test Redis connection first"""
-    print("🔌 Testing Redis connection...")
+def generate_random_vector(dimension=128):
+    """Generate a random normalized vector."""
+    # Normalize the vector to ensure consistent similarity calculations (e.g., cosine similarity)
+    vec = np.random.random(dimension)
+    return (vec / np.linalg.norm(vec)).tolist()
+
+def quick_test():
+    """Ultimate MyLath vector performance test."""
+    try:
+        print("🚀 MyLath Ultimate Vector Test")
+        print("=" * 60)
+        
+        # CRITICAL: Use db=0 for Redis Stack compatibility.
+        # Ensure your Redis Stack instance is running on localhost:6379.
+        storage = RedisStorage(host='localhost', port=6379, db=0)
+        
+        # Flush the database to ensure a clean test environment.
+        storage.redis.flushdb()
+        
+        # The Graph class is expected to instantiate and use VectorCore,
+        # which now handles Redis Search integration.
+        graph = Graph(storage)
+        
+        # Test parameters
+        num_vectors = 1000
+        vector_dim = 128
+        
+        print(f"📊 Parameters: {num_vectors:,} vectors × {vector_dim} dimensions")
+        
+        # Check Redis Stack status by trying to list RediSearch indices.
+        # This confirms if the RediSearch module is loaded and available.
+        try:
+            # FT._LIST is a RediSearch command to list all indices.
+            indices = storage.redis.execute_command("FT._LIST")
+            print(f"✅ Redis Stack available (DB=0)")
+            redis_stack_available = True
+        except Exception as e:
+            print(f"❌ Redis Stack not available or RediSearch module not loaded: {e}")
+            redis_stack_available = False
+        
+        # PHASE 1: INGESTION TEST - Adding vectors to MyLath.
+        print(f"\n📥 INGESTION TEST")
+        print("-" * 40)
+        
+        categories = ["document", "image", "audio", "video", "text"]
+        vectors = [] # To store references to added vectors
+        
+        start_time = time.time()
+        
+        for i in range(num_vectors):
+            # Generate a random vector for ingestion.
+            vector_data = generate_random_vector(vector_dim)
+            
+            # Add metadata and properties to each vector.
+            category = random.choice(categories)
+            metadata = {"type": category, "source": f"file_{i}"}
+            properties = {"title": f"{category}_{i}", "score": round(random.uniform(0.1, 1.0), 3)}
+            
+            # Add the vector to MyLath (which uses VectorCore internally).
+            vector = graph.vectors.add_vector(vector_data, metadata, properties)
+            vectors.append(vector)
+            
+            # Print progress updates periodically.
+            if (i + 1) % 200 == 0:
+                elapsed = time.time() - start_time
+                rate = (i + 1) / elapsed
+                print(f"    {i + 1:4d} vectors | {rate:6.1f} vec/sec | {elapsed:5.1f}s")
+        
+        ingestion_time = time.time() - start_time
+        ingestion_rate = num_vectors / ingestion_time
+        
+        print(f"\n📊 INGESTION RESULTS:")
+        print(f"    Time: {ingestion_time:.2f} seconds")
+        print(f"    Rate: {ingestion_rate:.1f} vectors/second")
+        print(f"    Per vector: {(ingestion_time/num_vectors)*1000:.2f} ms")
+        
+        # PHASE 2: BACKEND DETECTION - Verify which backend MyLath is using.
+        print(f"\n🔍 BACKEND ANALYSIS")
+        print("-" * 40)
+        
+        # Check Redis keys to infer backend usage.
+        # 'vec:*' keys indicate Redis Search is being used.
+        # 'vectors:*' keys indicate Python fallback storage.
+        redis_search_keys = len(storage.redis.keys("vec:*"))
+        python_keys = len(storage.redis.keys("vectors:*"))
+        
+        # Check the internal 'vector_index' set used by the Python fallback.
+        index_keys = storage.redis.scard("vector_index")
+        
+        backend_used = "Unknown"
+        expected_search_time = "N/A"
+
+        # Determine the backend based on the presence of specific key patterns.
+        if redis_search_keys > 0:
+            backend_used = "Redis Search"
+            print(f"✅ Backend: Redis Search")
+            print(f"    vec:* keys: {redis_search_keys}")
+            expected_search_time = "5-20ms"
+        elif python_keys > 0:
+            backend_used = "Python"
+            print(f"⚠️  Backend: Python fallback")
+            print(f"    vectors:* keys: {python_keys}")
+            expected_search_time = "100-500ms"
+        else:
+            print(f"❓ No vector keys found in Redis. Check ingestion process.")
+            
+        print(f"    vector_index entries (Python fallback set): {index_keys}")
+        print(f"    Expected search time: {expected_search_time}")
+        
+        # Verify if the RediSearch index 'mylath_vectors' exists.
+        if redis_stack_available:
+            try:
+                info = storage.redis.ft("mylath_vectors").info()
+                print(f"✅ MyLath vector index 'mylath_vectors' created and accessible.")
+            except redis.exceptions.ResponseError as e:
+                print(f"❌ MyLath vector index 'mylath_vectors' missing or inaccessible: {e}")
+        
+        # PHASE 3: SEARCH PERFORMANCE TEST - Measure similarity search speed.
+        print(f"\n🔍 SEARCH PERFORMANCE TEST")
+        print("-" * 40)
+        
+        search_times = []
+        num_searches = 10
+        k_results = 10 # Number of top similar results to retrieve
+        
+        for i in range(num_searches):
+            # Generate a random query vector.
+            query_vector = generate_random_vector(vector_dim)
+            
+            # Time the search operation.
+            start_time = time.time()
+            results = graph.vectors.search_vectors(query_vector, k=k_results)
+            search_time = time.time() - start_time
+            
+            search_times.append(search_time)
+            print(f"    Search {i+1:2d}: {search_time*1000:7.2f}ms | {len(results)} results")
+        
+        # Calculate search statistics.
+        avg_search = sum(search_times) / len(search_times)
+        min_search = min(search_times)
+        max_search = max(search_times)
+        
+        print(f"\n📊 SEARCH RESULTS:")
+        print(f"    Average: {avg_search*1000:7.2f} ms")
+        print(f"    Min:     {min_search*1000:7.2f} ms")
+        print(f"    Max:     {max_search*1000:7.2f} ms")
+        print(f"    Rate:    {1/avg_search:7.1f} searches/sec")
+        
+        # PHASE 4: FILTERED SEARCH TEST - Measure search speed with metadata filters.
+        print(f"\n🎯 FILTERED SEARCH TEST")
+        print("-" * 40)
+        
+        filter_tests = [
+            {"type": "document"},
+            {"type": "image"},
+            {"score": "0.5"} # Example filter for a property
+        ]
+        
+        for filter_dict in filter_tests:
+            query_vector = generate_random_vector(vector_dim)
+            
+            start_time = time.time()
+            filtered_results = graph.vectors.search_vectors(query_vector, k=5, filters=filter_dict)
+            filter_time = time.time() - start_time
+            
+            filter_key_str = ", ".join([f"{k}={v}" for k,v in filter_dict.items()])
+            print(f"    Filter ({filter_key_str}): {filter_time*1000:6.2f}ms | {len(filtered_results)} results")
+        
+        # PHASE 5: SAMPLE RESULTS - Display top search results for inspection.
+        print(f"\n📋 TOP 10 SEARCH RESULTS")
+        print("-" * 40)
+        
+        query_vector = generate_random_vector(vector_dim)
+        top_results = graph.vectors.search_vectors(query_vector, k=10)
+        
+        print(f"Query: [{', '.join([f'{x:.3f}' for x in query_vector[:6]])}...]")
+        print(f"Top {len(top_results)} matches:")
+        
+        for i, (vector, score) in enumerate(top_results, 1):
+            title = vector.properties.get("title", "Unknown")[:20]
+            vector_type = vector.metadata.get("type", "unknown")
+            vector_preview = [f'{x:.3f}' for x in vector.data[:4]]
+            
+            print(f"    {i:2d}. Score: {score:.4f} | Type: {vector_type:8s} | {title}")
+            print(f"          Data: [{', '.join(vector_preview)}...] | ID: {vector.id[:8]}...")
+        
+        # PHASE 6: PERFORMANCE ANALYSIS - Summarize and grade performance.
+        print(f"\n🏆 PERFORMANCE ANALYSIS")
+        print("=" * 60)
+        
+        # Determine search performance grade.
+        search_grade = "N/A"
+        performance_note = "No search performed or backend unknown."
+        if backend_used == "Redis Search":
+            if avg_search < 0.01:  # < 10ms
+                search_grade = "🚀 Excellent"
+                performance_note = "Redis Stack working optimally for search!"
+            elif avg_search < 0.05:  # < 50ms
+                search_grade = "⚡ Good"
+                performance_note = "Redis Stack working well for search."
+            else:
+                search_grade = "⚠️  Slow"
+                performance_note = "Redis Stack search may have issues or needs tuning."
+        elif backend_used == "Python":
+            if avg_search < 0.1:  # < 100ms
+                search_grade = "⚡ Fast"
+                performance_note = "Python fallback performing surprisingly well."
+            elif avg_search < 0.5:  # < 500ms
+                search_grade = "✅ Normal"
+                performance_note = "Typical Python fallback performance."
+            else:
+                search_grade = "⚠️  Slow"
+                performance_note = "Python fallback is slow. Consider Redis Stack."
+        
+        # Determine ingestion performance grade.
+        ingestion_grade = "N/A"
+        if ingestion_rate > 1000:
+            ingestion_grade = "🚀 Excellent"
+        elif ingestion_rate > 500:
+            ingestion_grade = "⚡ Good"
+        elif ingestion_rate > 200:
+            ingestion_grade = "✅ Fair"
+        else:
+            ingestion_grade = "⚠️  Slow"
+        
+        print(f"Backend: {backend_used}")
+        print(f"Database: Redis DB 0 ({'✅ Redis Stack compatible' if redis_stack_available else '❌ No Redis Stack'})")
+        print(f"")
+        print(f"📥 Ingestion Performance:")
+        print(f"    Grade: {ingestion_grade}")
+        print(f"    Rate:  {ingestion_rate:7.1f} vectors/second")
+        print(f"    Time:  {ingestion_time:7.2f} seconds")
+        print(f"")
+        print(f"🔍 Search Performance:")
+        print(f"    Grade: {search_grade}")
+        print(f"    Time:  {avg_search*1000:7.2f} ms average")
+        print(f"    Rate:  {1/avg_search:7.1f} searches/second")
+        print(f"    Note:  {performance_note}")
+        print(f"")
+        print(f"💾 Storage Efficiency:")
+        print(f"    Vectors: {len(vectors):,}")
+        # Rough estimate for memory usage (FLOAT32 is 4 bytes per dimension)
+        print(f"    Memory:  ~{len(vectors) * vector_dim * 4 / (1024*1024):.1f} MB (estimated vector data)")
+        print(f"    Density: {len(vectors) / (ingestion_time + sum(search_times)):.1f} ops/sec overall")
+        
+        # PHASE 7: RECOMMENDATIONS - Provide actionable advice.
+        print(f"\n💡 RECOMMENDATIONS")
+        print("-" * 40)
+        
+        if backend_used == "Python" and redis_stack_available:
+            print("🔥 PRIORITY: MyLath is not fully leveraging Redis Stack!")
+            print("    • Ensure 'mylath_vectors' index is created and populated.")
+            print("    • Verify VectorCore initialization and Redis Search integration.")
+            print("    • A potential 10-100x speedup is available with Redis Search.")
+        elif backend_used == "Python" and not redis_stack_available:
+            print("🚀 Install Redis Stack for massive speedup:")
+            print("    docker run -d -p 6379:6379 redis/redis-stack-server")
+        elif backend_used == "Redis Search" and avg_search > 0.05:
+            print("⚙️  Redis Stack optimization opportunities:")
+            print("    • Tune HNSW parameters (M, EF_CONSTRUCTION, EF_SEARCH) in VectorCore.")
+            print("    • Consider vector dimensionality reduction if appropriate.")
+        else:
+            print("✅ System optimally configured!")
+            print(f"    • Ingestion: {ingestion_rate:.0f} vectors/sec")
+            print(f"    • Search: {avg_search*1000:.1f}ms average")
+        
+        # Capacity projections based on current performance.
+        print(f"")
+        print(f"📈 Capacity Projections:")
+        print(f"    • Vectors per minute: {ingestion_rate * 60:,.0f}")
+        print(f"    • Searches per minute: {(1/avg_search) * 60:,.0f}")
+        print(f"    • Daily vector capacity: {ingestion_rate * 3600 * 8:,.0f} (8hr workday)")
+        
+        # Cleanup: Flush the database after the test.
+        storage.redis.flushdb()
+        print(f"\n🧹 Test data cleaned up")
+        
+        # Final summary of the test.
+        print(f"\n✅ TEST COMPLETED SUCCESSFULLY!")
+        print(f"")
+        print(f"📊 FINAL SUMMARY:")
+        print(f"    Backend: {backend_used}")
+        print(f"    Ingestion: {ingestion_rate:.0f} vec/sec ({ingestion_grade})")
+        print(f"    Search: {avg_search*1000:.1f}ms ({search_grade})")
+        print(f"    Overall: {performance_note}")
+        
+        return {
+            'backend': backend_used,
+            'ingestion_rate': ingestion_rate,
+            'search_time': avg_search,
+            'redis_stack_available': redis_stack_available
+        }
+        
+    except Exception as e:
+        print(f"❌ Test failed: {e}")
+        import traceback
+        traceback.print_exc() # Print full traceback for debugging
+        return None
+
+if __name__ == "__main__":
+    print("MyLath Ultimate Vector Performance Test")
+    print("Testing Redis Stack integration and performance")
+    print()
     
+    # Quick Redis connection check before running the full test.
     try:
         import redis
         r = redis.Redis(host='localhost', port=6379, db=0)
-        result = r.ping()
-        print(f"   ✅ Redis ping: {result}")
-        return True
+        r.ping()
+        print("✅ Redis connection OK")
     except Exception as e:
-        print(f"   ❌ Redis connection failed: {e}")
-        return False
-
-def test_direct_imports():
-    """Test direct imports"""
-    print("\n🧪 Testing direct imports...")
+        print(f"❌ Redis connection failed: {e}")
+        print("Please ensure Redis Stack is running on localhost:6379 and accessible.")
+        exit(1)
     
-    try:
-        # Import storage components directly
-        from storage.redis_storage import RedisStorage, Node, Edge
-        print("   ✅ RedisStorage, Node, Edge imported")
-        
-        # Import graph components directly  
-        from graph.graph import Graph
-        print("   ✅ Graph imported")
-        
-        # Import vector components directly
-        from vector.vector_core import VectorCore
-        print("   ✅ VectorCore imported")
-        
-        # Import traversal
-        from graph.traversal import GraphTraversal
-        print("   ✅ GraphTraversal imported")
-        
-        return True
-    except Exception as e:
-        print(f"   ❌ Direct import failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def test_core_functionality():
-    """Test core MyLath functionality with direct imports"""
-    print("\n🚀 Testing core functionality...")
+    # Run the comprehensive performance test.
+    results = quick_test()
     
-    try:
-        # Direct imports
-        from storage.redis_storage import RedisStorage, Node, Edge
-        from graph.graph import Graph
-        from vector.vector_core import VectorCore
-        
-        # Initialize
-        print("   🔧 Initializing storage and graph...")
-        storage = RedisStorage(host='localhost', port=6379, db=3)  # Use db=3 for testing
-        graph = Graph(storage)
-        
-        # Clear test database
-        storage.redis.flushdb()
-        print("   ✅ Cleared test database")
-        
-        # Test 1: Node operations
-        print("   📝 Testing node operations...")
-        alice = graph.create_node("person", {
-            "name": "Alice", 
-            "age": 30, 
-            "city": "NYC",
-            "skills": ["Python", "Graph DBs"]
-        })
-        
-        bob = graph.create_node("person", {
-            "name": "Bob", 
-            "age": 25, 
-            "city": "SF",
-            "skills": ["JavaScript", "React"]
-        })
-        
-        company = graph.create_node("company", {
-            "name": "TechCorp", 
-            "industry": "Software",
-            "size": "Medium"
-        })
-        
-        print(f"      ✅ Created 3 nodes: Alice ({alice.id[:8]}...), Bob ({bob.id[:8]}...), TechCorp ({company.id[:8]}...)")
-        
-        # Test node retrieval
-        retrieved_alice = graph.get_node(alice.id)
-        assert retrieved_alice.properties["name"] == "Alice"
-        print(f"      ✅ Retrieved Alice: {retrieved_alice.properties['name']}")
-        
-        # Test 2: Edge operations
-        print("   🔗 Testing edge operations...")
-        friendship = graph.create_edge("knows", alice.id, bob.id, {
-            "since": "2020", 
-            "strength": 8,
-            "type": "friendship"
-        })
-        
-        alice_job = graph.create_edge("works_at", alice.id, company.id, {
-            "role": "Senior Engineer", 
-            "salary": 120000,
-            "start_date": "2021-01-15"
-        })
-        
-        bob_job = graph.create_edge("works_at", bob.id, company.id, {
-            "role": "Frontend Developer", 
-            "salary": 100000,
-            "start_date": "2021-06-01"
-        })
-        
-        print(f"      ✅ Created 3 edges: friendship, alice_job, bob_job")
-        
-        # Test 3: Basic traversals
-        print("   🗺️  Testing graph traversals...")
-        
-        # Find Alice's friends
-        friends = graph.V(alice.id).out("knows").to_list()
-        friend_names = [f.properties["name"] for f in friends]
-        print(f"      ✅ Alice's friends: {friend_names}")
-        
-        # Find company employees
-        employees = graph.V(company.id).in_("works_at").to_list()
-        employee_names = [e.properties["name"] for e in employees]
-        print(f"      ✅ TechCorp employees: {employee_names}")
-        
-        # Find Alice's colleagues
-        colleagues = (graph.V(alice.id)
-                          .out("works_at")
-                          .in_("works_at")
-                          .to_list())
-        colleague_names = [c.properties["name"] for c in colleagues if c.id != alice.id]
-        print(f"      ✅ Alice's colleagues: {colleague_names}")
-        
-        # Test 4: Vector operations
-        print("   🔍 Testing vector operations...")
-        
-        # Add document embeddings (simulated)
-        doc1 = graph.vectors.add_vector(
-            [0.1, 0.2, 0.3, 0.4, 0.5],
-            metadata={"type": "document", "format": "pdf"},
-            properties={"title": "Machine Learning Basics", "author": "Alice"}
-        )
-        
-        doc2 = graph.vectors.add_vector(
-            [0.2, 0.3, 0.4, 0.5, 0.6],
-            metadata={"type": "document", "format": "pdf"},
-            properties={"title": "Deep Learning Advanced", "author": "Bob"}
-        )
-        
-        image1 = graph.vectors.add_vector(
-            [0.8, 0.1, 0.9, 0.2, 0.1],
-            metadata={"type": "image", "format": "jpg"},
-            properties={"title": "Cat Photo", "tags": ["animal", "cute"]}
-        )
-        
-        print(f"      ✅ Added 3 vectors: 2 documents + 1 image")
-        
-        # Test vector search
-        query_vector = [0.15, 0.25, 0.35, 0.45, 0.55]
-        
-        # Search all vectors
-        all_results = graph.vectors.search_vectors(query_vector, k=3)
-        print(f"      ✅ Found {len(all_results)} similar vectors")
-        
-        # Search with filters (documents only)
-        doc_results = graph.vectors.search_vectors(
-            query_vector, 
-            k=2, 
-            filters={"type": "document"}
-        )
-        print(f"      ✅ Found {len(doc_results)} similar documents")
-        
-        if doc_results:
-            best_doc = doc_results[0]
-            print(f"         Best match: '{best_doc[0].properties['title']}' (score: {best_doc[1]:.3f})")
-        
-        # Test 5: Property-based queries
-        print("   🔎 Testing property queries...")
-        
-        # Find by label
-        all_people = graph.find_nodes_by_label("person")
-        print(f"      ✅ Found {len(all_people)} people by label")
-        
-        # Find by property
-        nyc_people = graph.find_nodes_by_property("city", "NYC")
-        nyc_names = [p.properties["name"] for p in nyc_people]
-        print(f"      ✅ People in NYC: {nyc_names}")
-        
-        # Test 6: Advanced traversals
-        print("   🧭 Testing advanced traversals...")
-        
-        # Filter by age
-        young_people = graph.V().has("label", "person").filter(
-            lambda n: n.properties.get("age", 0) < 30
-        ).to_list()
-        young_names = [p.properties["name"] for p in young_people]
-        print(f"      ✅ People under 30: {young_names}")
-        
-        # Count operations
-        person_count = graph.V().has("label", "person").count()
-        print(f"      ✅ Total people count: {person_count}")
-        
-        # Test 7: Graph statistics
-        print("   📊 Testing graph statistics...")
-        stats = graph.get_stats()
-        print(f"      ✅ Graph stats: {stats}")
-        
-        # Test 8: Edge queries
-        print("   🔗 Testing edge queries...")
-        
-        # Get outgoing edges
-        alice_out_edges = storage.get_outgoing_edges(alice.id)
-        print(f"      ✅ Alice's outgoing edges: {len(alice_out_edges)}")
-        
-        # Get edges by label
-        work_edges = storage.get_outgoing_edges(alice.id, "works_at")
-        print(f"      ✅ Alice's work relationships: {len(work_edges)}")
-        
-        # Cleanup
-        storage.redis.flushdb()
-        print("   🧹 Cleaned up test data")
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ Core functionality test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def main():
-    """Run all tests"""
-    print("MyLath Direct Test")
-    print("=" * 60)
-    
-    success = True
-    
-    # Test Redis connection first
-    if not test_redis_connection():
-        success = False
-        print("\n💡 Redis is not running. Start it with:")
-        print("   docker run -d -p 6379:6379 redis:latest")
-        return False
-    
-    # Test direct imports
-    if not test_direct_imports():
-        success = False
-        return False
-    
-    # Test core functionality
-    if not test_core_functionality():
-        success = False
-        return False
-    
-    if success:
-        print(f"\n🎉 ALL TESTS PASSED! MyLath is working perfectly!")
-        print("\n📋 Summary of working features:")
-        print("   ✅ Redis connection and storage")
-        print("   ✅ Node creation, retrieval, and queries")
-        print("   ✅ Edge creation and relationship management")
-        print("   ✅ Graph traversals (Gremlin-style)")
-        print("   ✅ Vector similarity search with filters")
-        print("   ✅ Property-based queries and indexing")
-        print("   ✅ Advanced filtering and counting")
-        print("   ✅ Graph statistics")
-        
-        print(f"\n🚀 Next steps to explore MyLath:")
-        print("   1. Start API server:")
-        print("      python -c \"from mylath.mylath.api.graph_api import GraphAPI; from mylath.mylath.storage.redis_storage import RedisStorage; api = GraphAPI(RedisStorage()); api.run(host='0.0.0.0', port=5000)\"")
-        print("   2. Try aggregation examples:")
-        print("      python mylath/examples/aggregation_examples.py")
-        print("   3. Install GraphBLAS for 10-1000x speedup:")
-        print("      pip install python-graphblas")
-        print("   4. Try the basic usage example:")
-        print("      python mylath/examples/basic_usage.py")
-        
-        print(f"\n💡 MyLath is a powerful graph database with:")
-        print("   • Redis-backed storage for high performance")
-        print("   • Gremlin-style graph traversals")
-        print("   • Vector similarity search (like vector databases)")
-        print("   • Property indexing and complex queries")
-        print("   • REST API for web applications")
-        print("   • Optional GraphBLAS for massive performance boost")
+    if results:
+        print(f"\n🎉 MyLath is ready for production use (with Redis Stack if configured correctly)!")
     else:
-        print(f"\n❌ Some tests failed")
-    
-    return success
+        print(f"\n❌ Issues detected - check output above for details.")
 
-if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
