@@ -24,15 +24,14 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
     ],
     python_requires=">=3.8",
     install_requires=[
         "redis>=4.0.0",
         "numpy>=1.21.0",
         "flask>=2.0.0",
-        "uuid",
-        "json",
-        "dataclasses; python_version<'3.7'",
+        "click>=8.0.0",
     ],
     extras_require={
         "dev": [
@@ -46,6 +45,9 @@ setup(
         "docs": [
             "sphinx>=4.0",
             "sphinx-rtd-theme>=1.0",
+        ],
+        "graphblas": [
+            "python-graphblas>=2022.4.5",
         ],
     },
     entry_points={

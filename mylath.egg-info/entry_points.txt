@@ -1,0 +1,2 @@
+[console_scripts]
+mylath-server = mylath.cli:main

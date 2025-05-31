@@ -1,0 +1,8 @@
+README.md
+setup.py
+mylath.egg-info/PKG-INFO
+mylath.egg-info/SOURCES.txt
+mylath.egg-info/dependency_links.txt
+mylath.egg-info/entry_points.txt
+mylath.egg-info/requires.txt
+mylath.egg-info/top_level.txt
