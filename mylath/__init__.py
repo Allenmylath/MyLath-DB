@@ -1,13 +1,10 @@
-# mylath/__init__.py
-"""
-MyLath - A Graph Database with Vector Search using Redis
-"""
+# mylath/__init__.py - KEEP SAME
+from .mylath.storage.redis_storage import RedisStorage, Node, Edge, Vector
+from .mylath.graph import Graph, GraphTraversal
+from .mylath.vector.vector_core import VectorCore
 
-__version__ = "0.1.0"
-
-# Import core components from the correct paths
-from .mylath.graph import Graph
-from .mylath.storage import RedisStorage, Node, Edge  
-from .mylath.vector import VectorCore
-
-__all__ = ["Graph", "RedisStorage", "VectorCore", "Node", "Edge"]
+__all__ = [
+    "RedisStorage", "Node", "Edge", "Vector",
+    "Graph", "GraphTraversal",
+    "VectorCore"
+]
