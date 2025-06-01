@@ -4,7 +4,7 @@ Enhanced Graph class with GraphBLAS acceleration
 Drop-in replacement for the original Graph class with massive performance improvements
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set, Union, Callable
 import time
 
 try:

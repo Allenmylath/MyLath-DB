@@ -102,8 +102,8 @@ def quick_test():
             print(f"   Index Name: {backend_info['index_name']}")
         
         # Test parameters
-        num_vectors = 100000  # Scaled up for stress test
-        vector_dim = 128
+        num_vectors = 1000000  # Scaled up for stress test
+        vector_dim = 768
         
         print(f"\n📊 Test Parameters:")
         print(f"   Vectors: {num_vectors:,}")
