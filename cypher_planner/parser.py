@@ -1,7 +1,3 @@
-# =============================================================================
-# FIXED cypher_planner/parser.py - Replace the existing parser.py with this
-# =============================================================================
-
 """
 Cypher Query Parser - FIXED VERSION
 Converts Cypher query strings into Abstract Syntax Trees (AST)
@@ -26,7 +22,7 @@ class CypherParser:
     def _tokenize(self, query: str) -> List[str]:
         """Enhanced tokenizer for Cypher queries"""
         token_pattern = r"""
-            (?P<KEYWORD>MATCH|WHERE|RETURN|OPTIONAL|WITH|ORDER\s+BY|SKIP|LIMIT|AS|AND|OR|NOT|DISTINCT)\s*|
+            (?P<KEYWORD>MATCH|WHERE|RETURN|OPTIONAL|WITH|ORDER\s+BY|SKIP|LIMIT|AS|AND|OR|NOT|DISTINCT|CONTAINS|EXISTS)\s*|
             (?P<STRING>'[^']*'|"[^"]*")\s*|
             (?P<NUMBER>\d+(?:\.\d+)?)\s*|
             (?P<IDENTIFIER>[a-zA-Z_][a-zA-Z0-9_]*)\s*|
@@ -578,7 +574,7 @@ class CypherParser:
     def _parse_comparison_expression(self) -> Expression:
         left = self._parse_primary_expression()
 
-        if self._current_token() in ["=", "<>", "!=", "<", ">", "<=", ">="]:
+        if self._current_token() in ["=", "<>", "!=", "<", ">", "<=", ">=","CONTAINS"]:
             op = self._consume_token()
             right = self._parse_primary_expression()
             return BinaryExpression(left, op, right)
@@ -590,6 +586,31 @@ class CypherParser:
 
         if not token:
             raise ValueError("Unexpected end of expression")
+
+        # ENHANCED: Handle EXISTS function specially
+        if token.upper() == "EXISTS":
+            func_name = self._consume_token()
+            self._expect_token("(")
+            
+            # Simple EXISTS parsing - parse the inner pattern as a string for now
+            pattern_tokens = []
+            paren_count = 1
+            
+            while self._current_token() and paren_count > 0:
+                token = self._consume_token()
+                if token == "(":
+                    paren_count += 1
+                elif token == ")":
+                    paren_count -= 1
+                
+                if paren_count > 0:  # Don't include the final closing paren
+                    pattern_tokens.append(token)
+            
+            # Create a simple pattern argument
+            pattern_str = " ".join(pattern_tokens)
+            args = [LiteralExpression(pattern_str)]
+            
+            return FunctionCall(func_name, args)
 
         # Property access (variable.property)
         if self._peek_token() == ".":
