@@ -40,14 +40,11 @@ from .parser import CypherParser
 from .planner import (
    QueryPlanner,
    ExecutionPlan,
-   PlanNode,
-   ScanNode,
-   FilterNode,
-   ProjectNode,
-   JoinNode,
-   AggregateNode,
-   SortNode,
-   LimitNode
+   PlanStep,
+   format_query,
+   optimize_plan,
+   estimate_cost,
+   MockGraphStatistics
 )
 
 # Enhanced error handling components
@@ -72,14 +69,6 @@ from .integrated_parser import (
    parse_cypher_query,
    validate_cypher_query,
    get_cypher_errors
-)
-
-# Utility functions
-from .utils import (
-   format_query,
-   optimize_plan,
-   estimate_cost,
-   MockGraphStatistics
 )
 
 # Version information
@@ -115,14 +104,7 @@ __all__ = [
    
    # Execution plan nodes
    "ExecutionPlan",
-   "PlanNode",
-   "ScanNode",
-   "FilterNode", 
-   "ProjectNode",
-   "JoinNode",
-   "AggregateNode",
-   "SortNode",
-   "LimitNode",
+   "PlanStep",
    
    # Enhanced error handling
    "ErrorCode",
