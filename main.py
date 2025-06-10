@@ -1,549 +1,1003 @@
-# main.py
-
+#!/usr/bin/env python3
 """
-Enhanced Cypher Planner Demo
-Comprehensive demonstration of parsing, planning, and error handling capabilities
+Comprehensive Test Suite for Cypher Parser
+Measures performance, detects issues, and validates functionality
 """
 
 import time
 import sys
-from typing import List, Dict, Any
+import gc
+import tracemalloc
+import psutil
+import os
+from typing import List, Dict, Any, Tuple
+from dataclasses import dataclass
+from collections import defaultdict
+import json
 
-# Import all cypher_planner components
-from cypher_planner import (
-   CypherParser, QueryPlanner, 
-   parse_cypher_query, validate_cypher_query, get_cypher_errors,
-   CypherParserError, ErrorCode,
-   format_query, optimize_plan, estimate_cost,
-   get_package_info, demo_enhanced_features
-)
+# Add current directory to path for imports
+sys.path.insert(0, '.')
 
-def print_header(title: str, char: str = "="):
-   """Print a formatted header"""
-   print(f"\n{char * 60}")
-   print(f" {title}")
-   print(f"{char * 60}")
+# Import cypher_planner components
+try:
+    from cypher_planner import (
+        CypherParser, QueryPlanner, 
+        parse_cypher_query, validate_cypher_query, get_cypher_errors,
+        CypherParserError, get_package_info
+    )
+    IMPORTS_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Import Error: {e}")
+    print("Some tests may be skipped")
+    IMPORTS_AVAILABLE = False
 
-def print_section(title: str):
-   """Print a section header"""
-   print(f"\n🔹 {title}")
-   print("-" * 40)
+@dataclass
+class TestResult:
+    """Results from a single test"""
+    test_name: str
+    query: str
+    success: bool
+    parse_time: float  # milliseconds
+    plan_time: float   # milliseconds
+    memory_used: float # MB
+    error_message: str = ""
+    warnings: List[str] = None
+    
+    def __post_init__(self):
+        if self.warnings is None:
+            self.warnings = []
 
-def run_enhanced_demonstrations():
-   """Run comprehensive demonstrations of all features"""
-   
-   print_header("🚀 Enhanced Cypher Planner Demonstration")
-   
-   # Show package info
-   print_section("Package Information")
-   info = get_package_info()
-   print(f"Version: {info['version']}")
-   print(f"Description: {info['description']}")
-   print(f"Supported Features: {len([f for f, v in info['features'].items() if v])}")
-   
-   # Demo queries - from simple to complex
-   demo_queries = [
-       {
-           "name": "Simple Node Match",
-           "query": "MATCH (n:Person) RETURN n.name",
-           "description": "Basic node pattern with label and property return"
-       },
-       {
-           "name": "Relationship Pattern", 
-           "query": "MATCH (a:Person)-[r:KNOWS]->(b:Person) WHERE a.age > 25 RETURN a.name, b.name, r.since",
-           "description": "Node-relationship-node pattern with filtering"
-       },
-       {
-           "name": "Variable Length Path",
-           "query": "MATCH (start:Person {name: 'Alice'})-[:FOLLOWS*1..3]->(end:Person) RETURN start.name, end.name",
-           "description": "Variable length relationship path"
-       },
-       {
-           "name": "Optional Match",
-           "query": "MATCH (p:Person) OPTIONAL MATCH (p)-[:HAS_PHONE]->(phone:Phone) RETURN p.name, phone.number",
-           "description": "Optional pattern matching"
-       },
-       {
-           "name": "Aggregation with Grouping",
-           "query": "MATCH (p:Person)-[:WORKS_AT]->(c:Company) RETURN c.name, count(p) as employee_count ORDER BY employee_count DESC",
-           "description": "Aggregation function with grouping and ordering"
-       },
-       {
-           "name": "Complex Multi-Clause",
-           "query": """
-           MATCH (p:Person {country: 'USA'})-[:KNOWS*1..3]->(friend:Person)
-           WHERE p.age > 21 AND friend.age < p.age
-           WITH p, collect(friend) as friends
-           WHERE size(friends) > 2
-           RETURN p.name, size(friends) as friend_count, 
-                  [f IN friends | f.name] as friend_names
-           ORDER BY friend_count DESC
-           LIMIT 10
-           """,
-           "description": "Complex query with multiple clauses, collections, and list comprehension"
-       }
-   ]
-   
-   parser = CypherParser()
-   planner = QueryPlanner()
-   
-   for i, demo in enumerate(demo_queries, 1):
-       print_section(f"Demo {i}: {demo['name']}")
-       print(f"Description: {demo['description']}")
-       print(f"Query: {demo['query'].strip()}")
-       
-       try:
-           # Parse the query
-           start_time = time.time()
-           ast = parser.parse(demo['query'])
-           parse_time = time.time() - start_time
-           
-           print(f"✅ Parse successful! ({parse_time*1000:.1f}ms)")
-           
-           # Show AST structure
-           print(f"   📊 AST Structure:")
-           print(f"      - MATCH clauses: {len(ast.match_clauses)}")
-           print(f"      - Optional MATCH: {len(ast.optional_match_clauses)}")
-           print(f"      - WHERE clause: {'Yes' if ast.where_clause else 'No'}")
-           print(f"      - WITH clauses: {len(ast.with_clauses)}")
-           print(f"      - RETURN clause: {'Yes' if ast.return_clause else 'No'}")
-           
-           if ast.return_clause:
-               print(f"      - Return items: {len(ast.return_clause.items)}")
-               print(f"      - DISTINCT: {ast.return_clause.distinct}")
-               print(f"      - ORDER BY: {'Yes' if ast.return_clause.order_by else 'No'}")
-               print(f"      - LIMIT: {ast.return_clause.limit if ast.return_clause.limit else 'None'}")
-           
-           # Generate execution plan
-           start_time = time.time()
-           plan = planner.plan(ast)
-           plan_time = time.time() - start_time
-           
-           print(f"   🎯 Execution Plan: ({plan_time*1000:.1f}ms)")
-           for j, step in enumerate(plan.steps):
-               print(f"      {j+1}. {step.operation}")
-               if hasattr(step, 'details') and step.details:
-                   for detail in step.details[:2]:  # Show first 2 details
-                       print(f"         • {detail}")
-           
-           # Cost estimation
-           cost = estimate_cost(plan)
-           print(f"   💰 Estimated Cost: {cost}")
-           
-           # Try optimization
-           optimized_plan = optimize_plan(plan)
-           if optimized_plan != plan:
-               print(f"   ⚡ Optimization: Applied {len(optimized_plan.optimizations)} optimizations")
-               for opt in optimized_plan.optimizations[:2]:
-                   print(f"      • {opt}")
-           else:
-               print(f"   ⚡ Optimization: No optimizations applied")
-           
-       except Exception as e:
-           print(f"❌ Error: {str(e)}")
-           
-           # Show detailed error information
-           error_details = get_cypher_errors(demo['query'])
-           if error_details.get('errors'):
-               print("   📋 Error Details:")
-               for error in error_details['errors'][:3]:  # Show first 3 errors
-                   print(f"      • {error['code']}: {error['message']}")
-                   if error['suggestion']:
-                       print(f"        💡 Suggestion: {error['suggestion']}")
+@dataclass
+class TestSuite:
+    """Complete test suite results"""
+    name: str
+    results: List[TestResult]
+    total_time: float
+    success_rate: float
+    avg_parse_time: float
+    avg_plan_time: float
+    peak_memory: float
+    issues_found: List[str] = None
+    
+    def __post_init__(self):
+        if self.issues_found is None:
+            self.issues_found = []
 
-def run_performance_comparison():
-   """Compare parsing performance across different query types"""
-   
-   print_header("⚡ Performance Analysis", "=")
-   
-   test_queries = [
-       ("Simple", "MATCH (n:Person) RETURN n.name"),
-       ("Medium", "MATCH (a:Person)-[r:KNOWS]->(b:Person) WHERE a.age > 25 RETURN a.name, b.name"),
-       ("Complex", "MATCH (p:Person)-[:KNOWS*1..3]->(f) WITH p, collect(f) as friends WHERE size(friends) > 2 RETURN p.name, size(friends)"),
-       ("Very Complex", """
-           MATCH (p:Person {country: 'USA'})-[:KNOWS*1..3]->(friend:Person)
-           WHERE p.age > 21 AND friend.age < p.age
-           WITH p, collect(friend) as friends
-           WHERE size(friends) > 2
-           RETURN p.name, size(friends) as friend_count
-           ORDER BY friend_count DESC
-           LIMIT 10
-       """)
-   ]
-   
-   parser = CypherParser()
-   planner = QueryPlanner()
-   iterations = 100
-   
-   print(f"🔍 Running {iterations} iterations per query type...\n")
-   
-   results = []
-   
-   for query_type, query in test_queries:
-       print(f"Testing {query_type} Query...")
-       
-       # Parse timing
-       parse_times = []
-       for _ in range(iterations):
-           start = time.time()
-           try:
-               ast = parser.parse(query)
-               parse_time = time.time() - start
-               parse_times.append(parse_time)
-           except:
-               parse_times.append(float('inf'))  # Mark failures
-       
-       # Plan timing
-       plan_times = []
-       try:
-           ast = parser.parse(query)
-           for _ in range(iterations):
-               start = time.time()
-               plan = planner.plan(ast)
-               plan_time = time.time() - start
-               plan_times.append(plan_time)
-       except:
-           plan_times = [float('inf')] * iterations
-       
-       # Calculate statistics
-       valid_parse_times = [t for t in parse_times if t != float('inf')]
-       valid_plan_times = [t for t in plan_times if t != float('inf')]
-       
-       if valid_parse_times:
-           avg_parse = sum(valid_parse_times) / len(valid_parse_times)
-           min_parse = min(valid_parse_times)
-           max_parse = max(valid_parse_times)
-       else:
-           avg_parse = min_parse = max_parse = 0
-           
-       if valid_plan_times:
-           avg_plan = sum(valid_plan_times) / len(valid_plan_times)
-           min_plan = min(valid_plan_times)
-           max_plan = max(valid_plan_times)
-       else:
-           avg_plan = min_plan = max_plan = 0
-       
-       results.append({
-           'type': query_type,
-           'parse_avg': avg_parse * 1000,  # Convert to ms
-           'parse_min': min_parse * 1000,
-           'parse_max': max_parse * 1000,
-           'plan_avg': avg_plan * 1000,
-           'plan_min': min_plan * 1000, 
-           'plan_max': max_plan * 1000,
-           'success_rate': len(valid_parse_times) / iterations * 100
-       })
-       
-       print(f"  Parse: {avg_parse*1000:.2f}ms avg ({min_parse*1000:.2f}-{max_parse*1000:.2f}ms)")
-       print(f"  Plan:  {avg_plan*1000:.2f}ms avg ({min_plan*1000:.2f}-{max_plan*1000:.2f}ms)")
-       print(f"  Success: {len(valid_parse_times)}/{iterations} ({len(valid_parse_times)/iterations*100:.1f}%)")
-       print()
-   
-   # Summary table
-   print_section("Performance Summary")
-   print(f"{'Query Type':<12} {'Parse (ms)':<12} {'Plan (ms)':<12} {'Success %':<10}")
-   print("-" * 50)
-   for result in results:
-       print(f"{result['type']:<12} {result['parse_avg']:<12.2f} {result['plan_avg']:<12.2f} {result['success_rate']:<10.1f}")
+class CypherTestSuite:
+    """Comprehensive test suite for Cypher parser"""
+    
+    def __init__(self):
+        self.parser = None
+        self.planner = None
+        self.results = []
+        self.process = psutil.Process(os.getpid())
+        
+        if IMPORTS_AVAILABLE:
+            self.parser = CypherParser()
+            self.planner = QueryPlanner()
+    
+    def run_all_tests(self) -> Dict[str, TestSuite]:
+        """Run all test suites and return comprehensive results"""
+        print("🚀 Starting Comprehensive Cypher Parser Test Suite")
+        print("=" * 60)
+        
+        if not IMPORTS_AVAILABLE:
+            print("❌ Cannot run tests - imports failed")
+            return {}
+        
+        # Show system info
+        self._print_system_info()
+        
+        test_suites = {
+            'performance': self._run_performance_tests(),
+            'error_handling': self._run_error_handling_tests(),
+            'edge_cases': self._run_edge_case_tests(),
+            'stress': self._run_stress_tests(),
+            'regression': self._run_regression_tests(),
+            'memory': self._run_memory_tests(),
+            'scalability': self._run_scalability_tests()
+        }
+        
+        # Generate comprehensive report
+        self._generate_comprehensive_report(test_suites)
+        
+        return test_suites
+    
+    def _print_system_info(self):
+        """Print system information"""
+        print("🖥️ System Information:")
+        print(f"   Python Version: {sys.version.split()[0]}")
+        print(f"   Platform: {sys.platform}")
+        print(f"   CPU Count: {psutil.cpu_count()}")
+        print(f"   Memory: {psutil.virtual_memory().total / (1024**3):.1f} GB")
+        
+        if IMPORTS_AVAILABLE:
+            info = get_package_info()
+            print(f"   Cypher Planner: {info['version']}")
+        print()
+    
+    def _run_performance_tests(self) -> TestSuite:
+        """Test parsing performance across different query types"""
+        print("⚡ Running Performance Tests...")
+        
+        perf_queries = [
+            # Basic queries (should be fast)
+            ("Basic Node", "MATCH (n) RETURN n", "simple"),
+            ("Basic Label", "MATCH (n:Person) RETURN n.name", "simple"),
+            ("Basic Relationship", "MATCH (a)-[r]->(b) RETURN a, b", "simple"),
+            
+            # Medium complexity
+            ("Property Filter", "MATCH (n:Person) WHERE n.age > 25 AND n.country = 'USA' RETURN n.name", "medium"),
+            ("Relationship Types", "MATCH (a:Person)-[r:KNOWS|FOLLOWS]->(b:Person) RETURN a.name, b.name", "medium"),
+            ("Simple Variable Length", "MATCH (a)-[*1..3]->(b) RETURN a, b", "medium"),
+            
+            # High complexity
+            ("Complex Variable Length", "MATCH (a:Person)-[r:KNOWS*2..5]->(b:Person) WHERE a.age > b.age RETURN a.name, b.name", "complex"),
+            ("Multiple Clauses", """
+                MATCH (p:Person {country: 'USA'})
+                WHERE p.age > 21
+                WITH p, p.friends as friends
+                WHERE size(friends) > 2
+                RETURN p.name, size(friends)
+            """, "complex"),
+            ("Nested Expressions", """
+                MATCH (a:Person)-[:KNOWS]->(b:Person)-[:WORKS_AT]->(c:Company)
+                WHERE a.age > 25 AND b.salary > 50000 AND c.location = 'NYC'
+                RETURN a.name, collect(distinct c.name) as companies
+                ORDER BY size(companies) DESC
+                LIMIT 10
+            """, "complex"),
+            
+            # Very high complexity
+            ("Deep Nesting", """
+                MATCH (a:Person)-[:KNOWS*1..4]->(b:Person)-[:WORKS_AT]->(c:Company)
+                WHERE a.age BETWEEN 25 AND 65 
+                  AND b.salary > average_salary(c)
+                  AND c.industry IN ['tech', 'finance']
+                WITH a, collect(b) as colleagues, collect(c) as companies
+                WHERE size(colleagues) > 5 AND size(companies) > 2
+                UNWIND colleagues as colleague
+                MATCH (colleague)-[:LIVES_IN]->(city:City)
+                RETURN a.name as person,
+                       size(colleagues) as colleague_count,
+                       collect(distinct city.name) as cities
+                ORDER BY colleague_count DESC, size(cities) DESC
+                LIMIT 20
+            """, "very_complex"),
+        ]
+        
+        results = []
+        categories = defaultdict(list)
+        
+        for test_name, query, category in perf_queries:
+            result = self._measure_single_query(test_name, query)
+            results.append(result)
+            categories[category].append(result.parse_time)
+            
+            # Print immediate results
+            status = "✅" if result.success else "❌"
+            print(f"   {status} {test_name:<25} Parse: {result.parse_time:6.2f}ms  Plan: {result.plan_time:6.2f}ms")
+        
+        # Analyze performance by category
+        print("\n📊 Performance by Category:")
+        for category, times in categories.items():
+            avg_time = sum(times) / len(times)
+            max_time = max(times)
+            min_time = min(times)
+            print(f"   {category:<12}: avg={avg_time:6.2f}ms, min={min_time:6.2f}ms, max={max_time:6.2f}ms")
+        
+        total_time = sum(r.parse_time + r.plan_time for r in results)
+        success_rate = sum(1 for r in results if r.success) / len(results) * 100
+        avg_parse = sum(r.parse_time for r in results) / len(results)
+        avg_plan = sum(r.plan_time for r in results) / len(results)
+        peak_memory = max(r.memory_used for r in results)
+        
+        return TestSuite("Performance", results, total_time, success_rate, avg_parse, avg_plan, peak_memory)
+    
+    def _run_error_handling_tests(self) -> TestSuite:
+        """Test error handling and recovery capabilities"""
+        print("\n🔍 Running Error Handling Tests...")
+        
+        error_queries = [
+            # Syntax errors
+            ("Missing Parenthesis", "MATCH (n:Person WHERE n.age > 25 RETURN n"),
+            ("Unbalanced Brackets", "MATCH (n)-[r:KNOWS->(b) RETURN n, b"),
+            ("Invalid Operator", "MATCH (n) WHERE n.age >> 25 RETURN n"),
+            ("Incomplete Pattern", "MATCH (a)-[r]- RETURN a"),
+            ("Empty WHERE", "MATCH (n) WHERE RETURN n"),
+            ("Invalid Variable Length", "MATCH (a)-[*-1..3]->(b) RETURN a, b"),
+            ("Unclosed String", "MATCH (n {name: 'John}) RETURN n"),
+            
+            # Semantic errors
+            ("Undefined Variable", "MATCH (n:Person) RETURN m.name"),
+            ("Mixed Aggregation", "MATCH (n) RETURN count(n) + n.name"),
+            ("Invalid Function", "MATCH (n) RETURN nonexistent_func(n)"),
+            ("Circular Reference", "MATCH (a)-[r]->(a) WHERE r.weight = r.weight + 1 RETURN a"),
+            
+            # Edge cases
+            ("Very Long Query", "MATCH " + "(n)-[r]->" * 50 + "(m) RETURN n, m"),
+            ("Deep Nesting", "MATCH (a" + "-[:REL]->(b" * 20 + ") RETURN a"),
+            ("Many Variables", "MATCH " + ", ".join(f"(n{i}:Type{i})" for i in range(100)) + " RETURN " + ", ".join(f"n{i}" for i in range(100))),
+            
+            # Unicode and special characters
+            ("Unicode Labels", "MATCH (n:Personë) WHERE n.nämé = 'Jöhn' RETURN n"),
+            ("Special Characters", "MATCH (n {`weird-property`: 'value'}) RETURN n"),
+            ("Emoji in Query", "MATCH (n:Person {mood: '😊'}) RETURN n"),
+        ]
+        
+        results = []
+        error_categories = defaultdict(int)
+        
+        for test_name, query in error_queries:
+            result = self._measure_single_query(test_name, query, expect_error=True)
+            results.append(result)
+            
+            # Categorize errors
+            if not result.success and result.error_message:
+                if "syntax" in result.error_message.lower():
+                    error_categories["syntax"] += 1
+                elif "semantic" in result.error_message.lower() or "undefined" in result.error_message.lower():
+                    error_categories["semantic"] += 1
+                elif "memory" in result.error_message.lower():
+                    error_categories["memory"] += 1
+                else:
+                    error_categories["other"] += 1
+            
+            # Print immediate results
+            status = "✅" if not result.success else "⚠️"  # For error tests, failure is success
+            print(f"   {status} {test_name:<25} Parse: {result.parse_time:6.2f}ms")
+        
+        print("\n📊 Error Categories:")
+        for category, count in error_categories.items():
+            print(f"   {category:<12}: {count} errors")
+        
+        total_time = sum(r.parse_time + r.plan_time for r in results)
+        # For error tests, success rate is the rate of proper error detection
+        success_rate = sum(1 for r in results if not r.success) / len(results) * 100
+        avg_parse = sum(r.parse_time for r in results) / len(results)
+        avg_plan = sum(r.plan_time for r in results) / len(results)
+        peak_memory = max(r.memory_used for r in results)
+        
+        return TestSuite("Error Handling", results, total_time, success_rate, avg_parse, avg_plan, peak_memory)
+    
+    def _run_edge_case_tests(self) -> TestSuite:
+        """Test edge cases and boundary conditions"""
+        print("\n🎯 Running Edge Case Tests...")
+        
+        edge_queries = [
+            # Empty/minimal queries
+            ("Empty Query", ""),
+            ("Whitespace Only", "   \n\t  "),
+            ("Comment Only", "// This is just a comment"),
+            ("Just MATCH", "MATCH"),
+            ("Just RETURN", "RETURN"),
+            
+            # Boundary values
+            ("Zero Variable Length", "MATCH (a)-[*0..0]->(b) RETURN a, b"),
+            ("Large Variable Length", "MATCH (a)-[*1..100]->(b) RETURN a, b"),
+            ("Infinite Variable Length", "MATCH (a)-[*]->(b) RETURN a, b"),
+            ("Single Character Names", "MATCH (a)-[r]->(b) RETURN a"),
+            ("Very Long Names", f"MATCH (very_long_variable_name_{'x' * 100}:VeryLongLabelName) RETURN very_long_variable_name_{'x' * 100}"),
+            
+            # Complex patterns
+            ("Bidirectional", "MATCH (a)--(b) RETURN a, b"),
+            ("Self Reference", "MATCH (a)-[r]->(a) RETURN a"),
+            ("Multiple Self Refs", "MATCH (a)-[r1]->(a)-[r2]->(a) RETURN a"),
+            ("Star Pattern", "MATCH (center)<--(a), (center)<--(b), (center)<--(c) RETURN center, a, b, c"),
+            
+            # Data type edge cases
+            ("Null Values", "MATCH (n) WHERE n.value = null RETURN n"),
+            ("Boolean Values", "MATCH (n) WHERE n.active = true AND n.deleted = false RETURN n"),
+            ("Large Numbers", "MATCH (n) WHERE n.value = 999999999999999 RETURN n"),
+            ("Scientific Notation", "MATCH (n) WHERE n.value = 1.23e-10 RETURN n"),
+            ("Negative Numbers", "MATCH (n) WHERE n.value = -999.999 RETURN n"),
+            
+            # Escaping and quoting
+            ("Escaped Quotes", r"MATCH (n {name: 'John\'s House'}) RETURN n"),
+            ("Double Quotes", 'MATCH (n {name: "John\'s House"}) RETURN n'),
+            ("Mixed Quotes", """MATCH (n {name: "John's 'special' house"}) RETURN n"""),
+            ("Backtick Names", "MATCH (n:`Weird Label`) RETURN n.`weird property`"),
+        ]
+        
+        results = []
+        for test_name, query in edge_queries:
+            result = self._measure_single_query(test_name, query)
+            results.append(result)
+            
+            # Print immediate results
+            status = "✅" if result.success else "❌"
+            print(f"   {status} {test_name:<25} Parse: {result.parse_time:6.2f}ms")
+        
+        total_time = sum(r.parse_time + r.plan_time for r in results)
+        success_rate = sum(1 for r in results if r.success) / len(results) * 100
+        avg_parse = sum(r.parse_time for r in results) / len(results)
+        avg_plan = sum(r.plan_time for r in results) / len(results)
+        peak_memory = max(r.memory_used for r in results)
+        
+        return TestSuite("Edge Cases", results, total_time, success_rate, avg_parse, avg_plan, peak_memory)
+    
+    def _run_stress_tests(self) -> TestSuite:
+        """Stress test with high volume and complexity"""
+        print("\n💪 Running Stress Tests...")
+        
+        results = []
+        
+        # Test 1: High volume of simple queries
+        simple_query = "MATCH (n:Person) WHERE n.age > 25 RETURN n.name"
+        print("   Testing high volume (1000 simple queries)...")
+        
+        start_time = time.time()
+        successes = 0
+        total_parse_time = 0
+        
+        for i in range(1000):
+            result = self._measure_single_query(f"Volume_{i}", simple_query, silent=True)
+            if result.success:
+                successes += 1
+            total_parse_time += result.parse_time
+        
+        volume_time = time.time() - start_time
+        print(f"      Completed: {successes}/1000 successful, {total_parse_time:.1f}ms total parse time")
+        
+        results.append(TestResult("High Volume", "1000x simple queries", 
+                                successes > 990, total_parse_time, 0, 0))
+        
+        # Test 2: Memory stress test
+        print("   Testing memory usage with large queries...")
+        large_query = "MATCH " + "".join(f"(n{i}:Type{i})-[r{i}:REL{i}]->" for i in range(50)) + "(final) RETURN " + ", ".join(f"n{i}" for i in range(50))
+        
+        tracemalloc.start()
+        result = self._measure_single_query("Memory Stress", large_query)
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        
+        results.append(result)
+        print(f"      Memory usage: {peak / 1024 / 1024:.2f} MB peak")
+        
+        # Test 3: Deep recursion test
+        print("   Testing deep query nesting...")
+        deep_query = "MATCH " + "-[:REL]->(n)" * 100 + " RETURN n"
+        result = self._measure_single_query("Deep Nesting", deep_query)
+        results.append(result)
+        
+        total_time = sum(r.parse_time + r.plan_time for r in results)
+        success_rate = sum(1 for r in results if r.success) / len(results) * 100
+        avg_parse = sum(r.parse_time for r in results) / len(results)
+        avg_plan = sum(r.plan_time for r in results) / len(results)
+        peak_memory = max(r.memory_used for r in results)
+        
+        return TestSuite("Stress Tests", results, total_time, success_rate, avg_parse, avg_plan, peak_memory)
+    
+    def _run_regression_tests(self) -> TestSuite:
+        """Test core functionality to ensure no regressions"""
+        print("\n🔄 Running Regression Tests...")
+        
+        regression_queries = [
+            # Core MATCH patterns
+            ("Node Match", "MATCH (n) RETURN n"),
+            ("Label Match", "MATCH (n:Person) RETURN n"),
+            ("Property Match", "MATCH (n {name: 'John'}) RETURN n"),
+            ("Relationship Match", "MATCH (a)-[r]->(b) RETURN a, r, b"),
+            ("Typed Relationship", "MATCH (a)-[r:KNOWS]->(b) RETURN a, r, b"),
+            
+            # WHERE clauses
+            ("Simple WHERE", "MATCH (n) WHERE n.age > 25 RETURN n"),
+            ("Complex WHERE", "MATCH (n) WHERE n.age > 25 AND n.name = 'John' RETURN n"),
+            ("OR Condition", "MATCH (n) WHERE n.age > 65 OR n.age < 18 RETURN n"),
+            
+            # RETURN variations
+            ("Simple RETURN", "MATCH (n) RETURN n"),
+            ("Property RETURN", "MATCH (n) RETURN n.name, n.age"),
+            ("Alias RETURN", "MATCH (n) RETURN n.name AS name, n.age AS age"),
+            ("DISTINCT", "MATCH (n) RETURN DISTINCT n.type"),
+            
+            # ORDER BY and LIMIT
+            ("ORDER BY", "MATCH (n) RETURN n ORDER BY n.name"),
+            ("ORDER BY DESC", "MATCH (n) RETURN n ORDER BY n.age DESC"),
+            ("LIMIT", "MATCH (n) RETURN n LIMIT 10"),
+            ("SKIP LIMIT", "MATCH (n) RETURN n SKIP 5 LIMIT 10"),
+            
+            # Variable length paths
+            ("Variable Length", "MATCH (a)-[*1..3]->(b) RETURN a, b"),
+            ("Unbounded Path", "MATCH (a)-[*]->(b) RETURN a, b"),
+            
+            # OPTIONAL MATCH
+            ("Optional Match", "MATCH (a) OPTIONAL MATCH (a)-[r]->(b) RETURN a, b"),
+            
+            # WITH clauses
+            ("WITH Clause", "MATCH (a) WITH a, a.name AS name WHERE name IS NOT NULL RETURN name"),
+            
+            # Functions
+            ("Count Function", "MATCH (n) RETURN count(n)"),
+            ("Collect Function", "MATCH (a)-[]->(b) RETURN a, collect(b)"),
+        ]
+        
+        results = []
+        for test_name, query in regression_queries:
+            result = self._measure_single_query(test_name, query)
+            results.append(result)
+            
+            # Print immediate results
+            status = "✅" if result.success else "❌"
+            print(f"   {status} {test_name:<20} Parse: {result.parse_time:6.2f}ms")
+        
+        total_time = sum(r.parse_time + r.plan_time for r in results)
+        success_rate = sum(1 for r in results if r.success) / len(results) * 100
+        avg_parse = sum(r.parse_time for r in results) / len(results)
+        avg_plan = sum(r.plan_time for r in results) / len(results)
+        peak_memory = max(r.memory_used for r in results)
+        
+        return TestSuite("Regression", results, total_time, success_rate, avg_parse, avg_plan, peak_memory)
+    
+    def _run_memory_tests(self) -> TestSuite:
+        """Test memory usage and potential leaks"""
+        print("\n🧠 Running Memory Tests...")
+        
+        results = []
+        
+        # Test memory growth with repeated parsing
+        print("   Testing for memory leaks...")
+        base_query = "MATCH (n:Person)-[r:KNOWS]->(m:Person) WHERE n.age > m.age RETURN n.name, m.name"
+        
+        memory_samples = []
+        for i in range(100):
+            gc.collect()  # Force garbage collection
+            mem_before = self.process.memory_info().rss / 1024 / 1024  # MB
+            
+            result = self._measure_single_query(f"Memory_{i}", base_query, silent=True)
+            
+            mem_after = self.process.memory_info().rss / 1024 / 1024  # MB
+            memory_samples.append(mem_after - mem_before)
+        
+        avg_memory_delta = sum(memory_samples) / len(memory_samples)
+        max_memory_delta = max(memory_samples)
+        
+        print(f"      Average memory delta: {avg_memory_delta:.3f} MB")
+        print(f"      Maximum memory delta: {max_memory_delta:.3f} MB")
+        
+        # Check for significant memory growth
+        memory_leak_detected = avg_memory_delta > 0.1  # More than 0.1MB average growth
+        
+        results.append(TestResult("Memory Leak Test", "100x repeated parsing", 
+                                not memory_leak_detected, 0, 0, max_memory_delta,
+                                "Potential memory leak detected" if memory_leak_detected else ""))
+        
+        # Test large query memory usage
+        print("   Testing large query memory usage...")
+        large_elements = []
+        for i in range(1000):
+            large_elements.append(f"(n{i}:Type{i} {{prop{i}: 'value{i}'}})")
+        
+        large_query = "MATCH " + ", ".join(large_elements) + " RETURN " + ", ".join(f"n{i}" for i in range(10))
+        
+        tracemalloc.start()
+        result = self._measure_single_query("Large Query Memory", large_query)
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        
+        result.memory_used = peak / 1024 / 1024  # Convert to MB
+        results.append(result)
+        
+        print(f"      Large query memory: {result.memory_used:.2f} MB")
+        
+        total_time = sum(r.parse_time + r.plan_time for r in results)
+        success_rate = sum(1 for r in results if r.success) / len(results) * 100
+        avg_parse = sum(r.parse_time for r in results) / len(results)
+        avg_plan = sum(r.plan_time for r in results) / len(results)
+        peak_memory = max(r.memory_used for r in results)
+        
+        return TestSuite("Memory", results, total_time, success_rate, avg_parse, avg_plan, peak_memory)
+    
+    def _run_scalability_tests(self) -> TestSuite:
+        """Test how performance scales with query complexity"""
+        print("\n📈 Running Scalability Tests...")
+        
+        results = []
+        
+        # Test scalability with increasing variable length
+        print("   Testing variable length scalability...")
+        for max_length in [1, 2, 5, 10, 20, 50]:
+            query = f"MATCH (a)-[*1..{max_length}]->(b) RETURN a, b"
+            result = self._measure_single_query(f"VarLen_{max_length}", query)
+            results.append(result)
+            print(f"      Length {max_length:2d}: {result.parse_time:6.2f}ms")
+        
+        # Test scalability with increasing pattern complexity
+        print("   Testing pattern complexity scalability...")
+        for pattern_count in [1, 5, 10, 20, 50]:
+            patterns = []
+            for i in range(pattern_count):
+                patterns.append(f"(n{i}:Type{i})-[r{i}:REL{i}]->(m{i}:Type{i})")
+            
+            query = "MATCH " + ", ".join(patterns) + " RETURN " + ", ".join(f"n{i}" for i in range(min(pattern_count, 5)))
+            result = self._measure_single_query(f"Patterns_{pattern_count}", query)
+            results.append(result)
+            print(f"      Patterns {pattern_count:2d}: {result.parse_time:6.2f}ms")
+        
+        # Test scalability with increasing WHERE complexity
+        print("   Testing WHERE clause scalability...")
+        for condition_count in [1, 5, 10, 20, 50]:
+            conditions = []
+            for i in range(condition_count):
+                conditions.append(f"n.prop{i} > {i}")
+            
+            query = f"MATCH (n) WHERE {' AND '.join(conditions)} RETURN n"
+            result = self._measure_single_query(f"Conditions_{condition_count}", query)
+            results.append(result)
+            print(f"      Conditions {condition_count:2d}: {result.parse_time:6.2f}ms")
+        
+        total_time = sum(r.parse_time + r.plan_time for r in results)
+        success_rate = sum(1 for r in results if r.success) / len(results) * 100
+        avg_parse = sum(r.parse_time for r in results) / len(results)
+        avg_plan = sum(r.plan_time for r in results) / len(results)
+        peak_memory = max(r.memory_used for r in results)
+        
+        return TestSuite("Scalability", results, total_time, success_rate, avg_parse, avg_plan, peak_memory)
+    
+    def _measure_single_query(self, test_name: str, query: str, expect_error: bool = False, silent: bool = False) -> TestResult:
+        """Measure parsing time and memory for a single query"""
+        if not IMPORTS_AVAILABLE:
+            return TestResult(test_name, query, False, 0, 0, 0, "Imports not available")
+        
+        # Measure memory before
+        mem_before = self.process.memory_info().rss / 1024 / 1024  # MB
+        
+        # Measure parsing time
+        parse_start = time.perf_counter()
+        parse_success = False
+        parse_error = ""
+        warnings = []
+        
+        try:
+            ast = self.parser.parse(query)
+            parse_success = True
+        except Exception as e:
+            parse_error = str(e)
+            if not expect_error and not silent:
+                # Get detailed error info
+                try:
+                    error_details = get_cypher_errors(query)
+                    if error_details.get('warnings'):
+                        warnings = [w['message'] for w in error_details['warnings'][:3]]
+                except:
+                    pass
+        
+        parse_time = (time.perf_counter() - parse_start) * 1000  # Convert to ms
+        
+        # Measure planning time
+        plan_start = time.perf_counter()
+        plan_success = False
+        
+        if parse_success:
+            try:
+                plan = self.planner.plan(ast)
+                plan_success = True
+            except Exception as e:
+                if not parse_error:
+                    parse_error = f"Planning failed: {str(e)}"
+        
+        plan_time = (time.perf_counter() - plan_start) * 1000  # Convert to ms
+        
+        # Measure memory after
+        mem_after = self.process.memory_info().rss / 1024 / 1024  # MB
+        memory_used = mem_after - mem_before
+        
+        success = parse_success and (plan_success or expect_error)
+        
+        return TestResult(test_name, query, success, parse_time, plan_time, 
+                         memory_used, parse_error, warnings)
+    
+    def _generate_comprehensive_report(self, test_suites: Dict[str, TestSuite]) -> None:
+        """Generate comprehensive test report"""
+        print("\n" + "=" * 80)
+        print("📊 COMPREHENSIVE TEST REPORT")
+        print("=" * 80)
+        
+        # Overall summary
+        total_tests = sum(len(suite.results) for suite in test_suites.values())
+        total_successes = sum(sum(1 for r in suite.results if r.success) for suite in test_suites.values())
+        overall_success_rate = (total_successes / total_tests * 100) if total_tests > 0 else 0
+        
+        print(f"\n🎯 OVERALL SUMMARY:")
+        print(f"   Total Tests: {total_tests}")
+        print(f"   Successful: {total_successes}")
+        print(f"   Success Rate: {overall_success_rate:.1f}%")
+        print(f"   Test Suites: {len(test_suites)}")
+        
+        # Performance summary
+        all_parse_times = []
+        all_plan_times = []
+        all_memory_usage = []
+        
+        for suite in test_suites.values():
+            for result in suite.results:
+                if result.success:
+                    all_parse_times.append(result.parse_time)
+                    all_plan_times.append(result.plan_time)
+                    all_memory_usage.append(result.memory_used)
+        
+        if all_parse_times:
+            print(f"\n⚡ PERFORMANCE SUMMARY:")
+            print(f"   Average Parse Time: {sum(all_parse_times)/len(all_parse_times):.2f}ms")
+            print(f"   Fastest Parse: {min(all_parse_times):.2f}ms")
+            print(f"   Slowest Parse: {max(all_parse_times):.2f}ms")
+            print(f"   Average Plan Time: {sum(all_plan_times)/len(all_plan_times):.2f}ms")
+            print(f"   Peak Memory Usage: {max(all_memory_usage):.2f}MB")
+        
+        # Suite-by-suite breakdown
+        print(f"\n📋 SUITE BREAKDOWN:")
+        print(f"{'Suite':<15} {'Tests':<8} {'Success':<8} {'Avg Parse':<12} {'Avg Plan':<12} {'Peak Mem':<10}")
+        print("-" * 75)
+        
+        for suite_name, suite in test_suites.items():
+            success_count = sum(1 for r in suite.results if r.success)
+            print(f"{suite_name:<15} {len(suite.results):<8} {success_count:<8} "
+                  f"{suite.avg_parse_time:<12.2f} {suite.avg_plan_time:<12.2f} {suite.peak_memory:<10.2f}")
+        
+        # Issues analysis
+        print(f"\n🔍 ISSUES ANALYSIS:")
+        
+        # Collect all errors
+        all_errors = defaultdict(int)
+        slow_queries = []
+        memory_intensive = []
+        
+        for suite_name, suite in test_suites.items():
+            for result in suite.results:
+                if not result.success and result.error_message:
+                    # Categorize error
+                    error_msg = result.error_message.lower()
+                    if "syntax" in error_msg or "token" in error_msg:
+                        all_errors["Syntax Errors"] += 1
+                    elif "undefined" in error_msg or "semantic" in error_msg:
+                        all_errors["Semantic Errors"] += 1
+                    elif "memory" in error_msg:
+                        all_errors["Memory Errors"] += 1
+                    elif "timeout" in error_msg:
+                        all_errors["Timeout Errors"] += 1
+                    else:
+                        all_errors["Other Errors"] += 1
+                
+                # Flag slow queries (>100ms parse time)
+                if result.parse_time > 100:
+                    slow_queries.append((result.test_name, result.parse_time, result.query[:100]))
+                
+                # Flag memory intensive queries (>10MB)
+                if result.memory_used > 10:
+                    memory_intensive.append((result.test_name, result.memory_used, result.query[:100]))
+        
+        if all_errors:
+            print("   Error Categories:")
+            for error_type, count in all_errors.items():
+                print(f"     {error_type}: {count}")
+        else:
+            print("   ✅ No errors detected!")
+        
+        if slow_queries:
+            print(f"\n   ⚠️ Slow Queries (>{100}ms):")
+            for name, time_ms, query_preview in slow_queries[:5]:  # Show top 5
+                print(f"     {name}: {time_ms:.2f}ms - {query_preview}...")
+        
+        if memory_intensive:
+            print(f"\n   🧠 Memory Intensive Queries (>10MB):")
+            for name, memory_mb, query_preview in memory_intensive[:5]:  # Show top 5
+                print(f"     {name}: {memory_mb:.2f}MB - {query_preview}...")
+        
+        # Performance trends
+        print(f"\n📈 PERFORMANCE TRENDS:")
+        self._analyze_performance_trends(test_suites)
+        
+        # Recommendations
+        print(f"\n💡 RECOMMENDATIONS:")
+        self._generate_recommendations(test_suites, all_errors, slow_queries, memory_intensive)
+        
+        # Save detailed report to file
+        self._save_detailed_report(test_suites, "test_report.json")
+        
+        print(f"\n📄 Detailed report saved to: test_report.json")
+        print("=" * 80)
+    
+    def _analyze_performance_trends(self, test_suites: Dict[str, TestSuite]) -> None:
+        """Analyze performance trends across test suites"""
+        
+        # Analyze scalability trends
+        if "scalability" in test_suites:
+            scalability_suite = test_suites["scalability"]
+            
+            # Group by test type
+            varlen_times = []
+            pattern_times = []
+            condition_times = []
+            
+            for result in scalability_suite.results:
+                if result.test_name.startswith("VarLen_") and result.success:
+                    length = int(result.test_name.split("_")[1])
+                    varlen_times.append((length, result.parse_time))
+                elif result.test_name.startswith("Patterns_") and result.success:
+                    count = int(result.test_name.split("_")[1])
+                    pattern_times.append((count, result.parse_time))
+                elif result.test_name.startswith("Conditions_") and result.success:
+                    count = int(result.test_name.split("_")[1])
+                    condition_times.append((count, result.parse_time))
+            
+            # Analyze trends
+            if len(varlen_times) > 1:
+                varlen_times.sort()
+                growth_rate = varlen_times[-1][1] / varlen_times[0][1] if varlen_times[0][1] > 0 else 0
+                print(f"   Variable Length Scaling: {growth_rate:.1f}x slowdown from {varlen_times[0][0]} to {varlen_times[-1][0]}")
+            
+            if len(pattern_times) > 1:
+                pattern_times.sort()
+                growth_rate = pattern_times[-1][1] / pattern_times[0][1] if pattern_times[0][1] > 0 else 0
+                print(f"   Pattern Count Scaling: {growth_rate:.1f}x slowdown from {pattern_times[0][0]} to {pattern_times[-1][0]} patterns")
+        
+        # Analyze error handling performance
+        if "error_handling" in test_suites:
+            error_suite = test_suites["error_handling"]
+            error_times = [r.parse_time for r in error_suite.results if not r.success]
+            if error_times:
+                avg_error_time = sum(error_times) / len(error_times)
+                print(f"   Error Detection Time: {avg_error_time:.2f}ms average")
+    
+    def _generate_recommendations(self, test_suites: Dict[str, TestSuite], 
+                                all_errors: Dict[str, int], slow_queries: List, 
+                                memory_intensive: List) -> None:
+        """Generate actionable recommendations"""
+        
+        recommendations = []
+        
+        # Performance recommendations
+        if slow_queries:
+            recommendations.append("🐌 Consider optimizing tokenization for complex queries")
+            recommendations.append("⚡ Implement query complexity limits to prevent performance issues")
+        
+        # Memory recommendations
+        if memory_intensive:
+            recommendations.append("🧠 Implement memory pooling for large query parsing")
+            recommendations.append("♻️ Add memory cleanup after parsing large queries")
+        
+        # Error handling recommendations
+        if all_errors.get("Syntax Errors", 0) > 5:
+            recommendations.append("🔧 Improve error recovery in tokenizer")
+        
+        if all_errors.get("Memory Errors", 0) > 0:
+            recommendations.append("💾 Add memory limits and graceful degradation")
+        
+        # Success rate recommendations
+        overall_success = sum(len([r for r in suite.results if r.success]) for suite in test_suites.values())
+        total_tests = sum(len(suite.results) for suite in test_suites.values())
+        success_rate = (overall_success / total_tests * 100) if total_tests > 0 else 0
+        
+        if success_rate < 90:
+            recommendations.append("❗ Investigate and fix failing test cases")
+        elif success_rate < 95:
+            recommendations.append("⚠️ Monitor edge cases that cause parsing failures")
+        
+        # Scalability recommendations
+        if "scalability" in test_suites:
+            scalability_suite = test_suites["scalability"]
+            max_parse_time = max(r.parse_time for r in scalability_suite.results if r.success)
+            if max_parse_time > 1000:  # > 1 second
+                recommendations.append("🚀 Consider implementing incremental parsing for very large queries")
+        
+        # Print recommendations
+        if recommendations:
+            for i, rec in enumerate(recommendations, 1):
+                print(f"   {i}. {rec}")
+        else:
+            print("   ✅ No major issues detected - performance looks good!")
+    
+    def _save_detailed_report(self, test_suites: Dict[str, TestSuite], filename: str) -> None:
+        """Save detailed test results to JSON file"""
+        
+        report_data = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "system_info": {
+                "python_version": sys.version.split()[0],
+                "platform": sys.platform,
+                "cpu_count": psutil.cpu_count(),
+                "memory_gb": psutil.virtual_memory().total / (1024**3)
+            },
+            "test_suites": {}
+        }
+        
+        for suite_name, suite in test_suites.items():
+            suite_data = {
+                "name": suite.name,
+                "total_time": suite.total_time,
+                "success_rate": suite.success_rate,
+                "avg_parse_time": suite.avg_parse_time,
+                "avg_plan_time": suite.avg_plan_time,
+                "peak_memory": suite.peak_memory,
+                "results": []
+            }
+            
+            for result in suite.results:
+                result_data = {
+                    "test_name": result.test_name,
+                    "query": result.query[:200] + "..." if len(result.query) > 200 else result.query,
+                    "success": result.success,
+                    "parse_time": result.parse_time,
+                    "plan_time": result.plan_time,
+                    "memory_used": result.memory_used,
+                    "error_message": result.error_message,
+                    "warnings": result.warnings
+                }
+                suite_data["results"].append(result_data)
+            
+            report_data["test_suites"][suite_name] = suite_data
+        
+        try:
+            with open(filename, 'w') as f:
+                json.dump(report_data, f, indent=2)
+        except Exception as e:
+            print(f"   Warning: Could not save report to {filename}: {e}")
 
-def interactive_enhanced_mode():
-   """Interactive mode with enhanced error handling"""
-   
-   print_header("🎮 Interactive Enhanced Mode")
-   print("Enter Cypher queries to see parsing, planning, and error analysis.")
-   print("Commands: 'help', 'stats', 'demo', 'quit'")
-   
-   parser = CypherParser()
-   planner = QueryPlanner()
-   session_stats = {
-       'queries_parsed': 0,
-       'successful_parses': 0,
-       'syntax_errors': 0,
-       'semantic_errors': 0
-   }
-   
-   while True:
-       try:
-           query = input("\ncypher> ").strip()
-           
-           if not query:
-               continue
-               
-           if query.lower() == 'quit':
-               break
-           elif query.lower() == 'help':
-               print("\nCommands:")
-               print("  help     - Show this help")
-               print("  stats    - Show session statistics")
-               print("  demo     - Run error handling demo")
-               print("  quit     - Exit interactive mode")
-               print("\nOr enter any Cypher query to analyze it.")
-               continue
-           elif query.lower() == 'stats':
-               print(f"\n📊 Session Statistics:")
-               for key, value in session_stats.items():
-                   print(f"  {key.replace('_', ' ').title()}: {value}")
-               if session_stats['queries_parsed'] > 0:
-                   success_rate = session_stats['successful_parses'] / session_stats['queries_parsed'] * 100
-                   print(f"  Success Rate: {success_rate:.1f}%")
-               continue
-           elif query.lower() == 'demo':
-               demonstrate_enhanced_error_handling()
-               continue
-           
-           session_stats['queries_parsed'] += 1
-           
-           # Quick validation first
-           print(f"\n🔍 Quick Validation: {'✅ Valid' if validate_cypher_query(query) else '❌ Invalid'}")
-           
-           # Detailed parsing
-           try:
-               start_time = time.time()
-               ast = parser.parse(query)
-               parse_time = time.time() - start_time
-               
-               session_stats['successful_parses'] += 1
-               
-               print(f"✅ Parse Successful! ({parse_time*1000:.1f}ms)")
-               
-               # Show query structure
-               print("📊 Query Structure:")
-               if ast.match_clauses:
-                   print(f"   • {len(ast.match_clauses)} MATCH clause(s)")
-               if ast.optional_match_clauses:
-                   print(f"   • {len(ast.optional_match_clauses)} OPTIONAL MATCH clause(s)")
-               if ast.where_clause:
-                   print(f"   • WHERE clause present")
-               if ast.with_clauses:
-                   print(f"   • {len(ast.with_clauses)} WITH clause(s)")
-               if ast.return_clause:
-                   print(f"   • RETURN clause with {len(ast.return_clause.items)} item(s)")
-               
-               # Generate execution plan
-               try:
-                   start_time = time.time()
-                   plan = planner.plan(ast)
-                   plan_time = time.time() - start_time
-                   
-                   print(f"🎯 Execution Plan: ({plan_time*1000:.1f}ms)")
-                   for i, step in enumerate(plan.steps[:5]):  # Show first 5 steps
-                       print(f"   {i+1}. {step.operation}")
-                   if len(plan.steps) > 5:
-                       print(f"   ... and {len(plan.steps) - 5} more steps")
-                   
-                   # Cost estimation
-                   cost = estimate_cost(plan)
-                   print(f"💰 Estimated Cost: {cost}")
-                   
-               except Exception as e:
-                   print(f"⚠️  Planning failed: {str(e)}")
-               
-           except Exception as e:
-               print(f"❌ Parse Failed: {str(e)}")
-               
-               # Detailed error analysis
-               error_details = get_cypher_errors(query)
-               
-               if error_details.get('errors'):
-                   has_syntax_error = any('syntax' in err['message'].lower() for err in error_details['errors'])
-                   has_semantic_error = any('semantic' in err['message'].lower() or 'undefined' in err['message'].lower() for err in error_details['errors'])
-                   
-                   if has_syntax_error:
-                       session_stats['syntax_errors'] += 1
-                   elif has_semantic_error:
-                       session_stats['semantic_errors'] += 1
-                   
-                   print("🔍 Error Analysis:")
-                   for error in error_details['errors'][:3]:  # Show first 3 errors
-                       print(f"   • {error['code']}: {error['message']}")
-                       if error['suggestion']:
-                           print(f"     💡 {error['suggestion']}")
-                       if error['context']:
-                           print(f"     📍 Context: {error['context'][:50]}...")
-               
-               if error_details.get('warnings'):
-                   print("⚠️  Warnings:")
-                   for warning in error_details['warnings'][:2]:  # Show first 2 warnings
-                       print(f"   • {warning['code']}: {warning['message']}")
-       
-       except KeyboardInterrupt:
-           print("\n\nExiting interactive mode...")
-           break
-       except Exception as e:
-           print(f"Unexpected error: {str(e)}")
-   
-   # Show final statistics
-   print(f"\n📊 Final Session Statistics:")
-   for key, value in session_stats.items():
-       print(f"   {key.replace('_', ' ').title()}: {value}")
-
-def demonstrate_enhanced_error_handling():
-   """Demonstrate the enhanced error handling capabilities"""
-   
-   print_header("🔍 Enhanced Error Handling Demonstration")
-   
-   test_cases = [
-       {
-           'name': 'Valid Query',
-           'query': "MATCH (n:Person) WHERE n.age > 25 RETURN n.name",
-           'expected': 'success'
-       },
-       {
-           'name': 'Syntax Error - Missing Parenthesis',
-           'query': "MATCH (n:Person WHERE n.age > 25 RETURN n.name",
-           'expected': 'syntax_error'
-       },
-       {
-           'name': 'Syntax Error - Unbalanced Brackets',
-           'query': "MATCH (n:Person)-[r:KNOWS->(b:Person) RETURN n, b",
-           'expected': 'syntax_error'
-       },
-       {
-           'name': 'Semantic Error - Undefined Variable',
-           'query': "MATCH (n:Person) RETURN m.name",
-           'expected': 'semantic_error'
-       },
-       {
-           'name': 'Semantic Error - Mixed Aggregation',
-           'query': "MATCH (n:Person) RETURN count(n) + n.name",
-           'expected': 'semantic_error'
-       },
-       {
-           'name': 'Empty WHERE Clause',
-           'query': "MATCH (n:Person) WHERE RETURN n.name",
-           'expected': 'syntax_error'
-       },
-       {
-           'name': 'Invalid Variable Length',
-           'query': "MATCH (a)-[*-1..3]->(b) RETURN a, b",
-           'expected': 'syntax_error'
-       },
-       {
-           'name': 'Performance Warning - Potential Cartesian Product',
-           'query': "MATCH (n) MATCH (m) RETURN n, m",
-           'expected': 'warning'
-       },
-       {
-           'name': 'Complex Valid Query',
-           'query': """
-           MATCH (p:Person {country: 'USA'})-[:KNOWS*1..3]->(friend:Person)
-           WHERE p.age > 21 AND friend.age < p.age
-           WITH p, collect(friend) as friends
-           WHERE size(friends) > 2
-           RETURN p.name, size(friends) as friend_count
-           ORDER BY friend_count DESC
-           LIMIT 10
-           """,
-           'expected': 'success'
-       }
-   ]
-   
-   parser = CypherParser()
-   
-   for i, test_case in enumerate(test_cases, 1):
-       print_section(f"Test {i}: {test_case['name']}")
-       print(f"Query: {test_case['query'].strip()}")
-       print(f"Expected: {test_case['expected']}")
-       
-       # Quick validation
-       is_valid = validate_cypher_query(test_case['query'])
-       print(f"Quick validation: {'✅ Valid' if is_valid else '❌ Invalid'}")
-       
-       # Detailed parsing
-       try:
-           result = parser.parse(test_case['query'])
-           print("✅ Parse successful!")
-           print(f"   Query type: {type(result).__name__}")
-           
-           # Show basic structure for successful parses
-           if result.match_clauses:
-               print(f"   MATCH clauses: {len(result.match_clauses)}")
-           if result.where_clause:
-               print(f"   WHERE clause: Present")
-           if result.return_clause:
-               print(f"   RETURN items: {len(result.return_clause.items)}")
-               
-       except Exception as e:
-           print("❌ Parse failed!")
-           print(f"   Error: {str(e)[:100]}{'...' if len(str(e)) > 100 else ''}")
-           
-           # Get detailed error information
-           error_details = get_cypher_errors(test_case['query'])
-           
-           if error_details.get('errors'):
-               print("   📋 Detailed Errors:")
-               for error in error_details['errors'][:2]:  # Show first 2 errors
-                   print(f"      • {error['code']}: {error['message']}")
-                   if error['suggestion']:
-                       print(f"        💡 {error['suggestion']}")
-                   if error.get('position') and error['position']['line']:
-                       print(f"        📍 Line {error['position']['line']}, Column {error['position']['column']}")
-                       
-           if error_details.get('warnings'):
-               print("   ⚠️  Warnings:")
-               for warning in error_details['warnings'][:2]:  # Show first 2 warnings
-                   print(f"      • {warning['code']}: {warning['message']}")
-   
-   # Show parser statistics
-   print_section("Parser Statistics")
-   stats = parser.get_parse_statistics()
-   for key, value in stats.items():
-       print(f"   {key.replace('_', ' ').title()}: {value}")
+def interactive_test_mode():
+    """Interactive mode for testing specific queries"""
+    print("\n🎮 Interactive Test Mode")
+    print("Enter Cypher queries to test (type 'quit' to exit)")
+    print("Commands: 'help', 'stats', 'benchmark', 'memory'")
+    print("-" * 50)
+    
+    if not IMPORTS_AVAILABLE:
+        print("❌ Cannot run interactive mode - imports failed")
+        return
+    
+    test_suite = CypherTestSuite()
+    session_results = []
+    
+    while True:
+        try:
+            query = input("\ncypher> ").strip()
+            
+            if not query:
+                continue
+            
+            if query.lower() == 'quit':
+                break
+            elif query.lower() == 'help':
+                print("\nCommands:")
+                print("  help      - Show this help")
+                print("  stats     - Show session statistics")
+                print("  benchmark - Run quick benchmark")
+                print("  memory    - Show memory usage")
+                print("  quit      - Exit")
+                continue
+            elif query.lower() == 'stats':
+                if session_results:
+                    successful = sum(1 for r in session_results if r.success)
+                    avg_parse = sum(r.parse_time for r in session_results) / len(session_results)
+                    max_parse = max(r.parse_time for r in session_results)
+                    print(f"\n📊 Session Stats:")
+                    print(f"   Queries tested: {len(session_results)}")
+                    print(f"   Successful: {successful}")
+                    print(f"   Success rate: {successful/len(session_results)*100:.1f}%")
+                    print(f"   Average parse time: {avg_parse:.2f}ms")
+                    print(f"   Slowest query: {max_parse:.2f}ms")
+                else:
+                    print("   No queries tested yet")
+                continue
+            elif query.lower() == 'benchmark':
+                print("\n⚡ Quick Benchmark:")
+                benchmark_queries = [
+                    "MATCH (n) RETURN n",
+                    "MATCH (a)-[r]->(b) RETURN a, b",
+                    "MATCH (a)-[*1..3]->(b) WHERE a.age > 25 RETURN a, b"
+                ]
+                for i, bq in enumerate(benchmark_queries, 1):
+                    result = test_suite._measure_single_query(f"Bench_{i}", bq, silent=True)
+                    status = "✅" if result.success else "❌"
+                    print(f"   {status} Query {i}: {result.parse_time:.2f}ms")
+                continue
+            elif query.lower() == 'memory':
+                process = psutil.Process(os.getpid())
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                print(f"\n🧠 Current memory usage: {memory_mb:.2f} MB")
+                continue
+            
+            # Test the query
+            result = test_suite._measure_single_query("Interactive", query)
+            session_results.append(result)
+            
+            # Display results
+            if result.success:
+                print(f"✅ Success! Parse: {result.parse_time:.2f}ms, Plan: {result.plan_time:.2f}ms")
+                if result.memory_used > 1:
+                    print(f"   Memory: {result.memory_used:.2f}MB")
+                if result.warnings:
+                    print(f"   Warnings: {', '.join(result.warnings[:2])}")
+            else:
+                print(f"❌ Failed! Parse: {result.parse_time:.2f}ms")
+                print(f"   Error: {result.error_message[:100]}...")
+                
+                # Try to get more detailed error info
+                try:
+                    error_details = get_cypher_errors(query)
+                    if error_details.get('errors'):
+                        for error in error_details['errors'][:2]:
+                            print(f"   • {error['code']}: {error['message']}")
+                            if error['suggestion']:
+                                print(f"     💡 {error['suggestion']}")
+                except:
+                    pass
+        
+        except KeyboardInterrupt:
+            print("\n\n👋 Exiting interactive mode...")
+            break
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+    
+    # Show final session stats
+    if session_results:
+        successful = sum(1 for r in session_results if r.success)
+        print(f"\n📊 Final Session Stats:")
+        print(f"   Queries tested: {len(session_results)}")
+        print(f"   Successful: {successful} ({successful/len(session_results)*100:.1f}%)")
 
 def main():
-   """Main entry point for the enhanced Cypher planner demo"""
-   
-   print("🚀 Welcome to Enhanced Cypher Planner!")
-   print("=" * 50)
-   print("A comprehensive Cypher query parser and planner with")
-   print("enhanced error handling inspired by FalkorDB.")
-   
-   # Show package information
-   info = get_package_info()
-   print(f"\nVersion: {info['version']}")
-   print(f"Features: {len([f for f, v in info['features'].items() if v])} enabled")
-   
-   while True:
-       print("\nChoose mode:")
-       print("1. Enhanced demonstrations (default)")
-       print("2. Performance analysis") 
-       print("3. Interactive mode")
-       print("4. Error handling demonstration")
-       print("5. Quick feature demo")
-       print("6. Exit")
-       
-       try:
-           choice = input("\nEnter choice (1-6): ").strip()
-           
-           if choice == "" or choice == "1":
-               run_enhanced_demonstrations()
-           elif choice == "2":
-               run_performance_comparison()
-           elif choice == "3":
-               interactive_enhanced_mode()
-           elif choice == "4":
-               demonstrate_enhanced_error_handling()
-           elif choice == "5":
-               demo_enhanced_features()
-           elif choice == "6":
-               print("\n👋 Thank you for using Enhanced Cypher Planner!")
-               break
-           else:
-               print("❌ Invalid choice. Please enter 1-6.")
-               continue
-               
-           # Ask if user wants to try another mode
-           next_choice = input("\n🔄 Try another mode? (y/n): ").lower().strip()
-           if next_choice not in ['y', 'yes', '']:
-               print("\n👋 Thank you for using Enhanced Cypher Planner!")
-               break
-               
-       except KeyboardInterrupt:
-           print("\n\n👋 Goodbye!")
-           break
-       except Exception as e:
-           print(f"\n❌ Unexpected error: {str(e)}")
-           print("Please try again or contact support.")
+    """Main entry point"""
+    print("🧪 Cypher Parser Comprehensive Test Suite")
+    print("=" * 50)
+    
+    if not IMPORTS_AVAILABLE:
+        print("❌ Cannot run tests - cypher_planner imports failed")
+        print("Make sure you're in the cypher_planner project directory")
+        return
+    
+    print("Choose test mode:")
+    print("1. Run full test suite (default)")
+    print("2. Interactive testing mode")
+    print("3. Quick performance check")
+    print("4. Error handling focus")
+    print("5. Memory analysis")
+    
+    try:
+        choice = input("\nEnter choice (1-5): ").strip()
+        
+        test_suite = CypherTestSuite()
+        
+        if choice == "" or choice == "1":
+            # Full test suite
+            results = test_suite.run_all_tests()
+        elif choice == "2":
+            # Interactive mode
+            interactive_test_mode()
+            return
+        elif choice == "3":
+            # Quick performance check
+            print("\n⚡ Quick Performance Check")
+            results = {
+                'performance': test_suite._run_performance_tests(),
+                'regression': test_suite._run_regression_tests()
+            }
+            test_suite._generate_comprehensive_report(results)
+        elif choice == "4":
+            # Error handling focus
+            print("\n🔍 Error Handling Analysis")
+            results = {
+                'error_handling': test_suite._run_error_handling_tests(),
+                'edge_cases': test_suite._run_edge_case_tests()
+            }
+            test_suite._generate_comprehensive_report(results)
+        elif choice == "5":
+            # Memory analysis
+            print("\n🧠 Memory Analysis")
+            results = {
+                'memory': test_suite._run_memory_tests(),
+                'stress': test_suite._run_stress_tests()
+            }
+            test_suite._generate_comprehensive_report(results)
+        else:
+            print("❌ Invalid choice")
+            return
+        
+    except KeyboardInterrupt:
+        print("\n\n👋 Test suite interrupted by user")
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-   main()
+    main()
