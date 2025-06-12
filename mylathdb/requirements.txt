@@ -1,0 +1,6 @@
+# MyLathDB Execution Engine dependencies
+redis>=4.0.0
+numpy>=1.20.0
+psutil>=5.8.0
+# Optional: GraphBLAS for high-performance operations
+# graphblas>=2022.12.0

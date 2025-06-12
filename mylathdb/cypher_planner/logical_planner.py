@@ -5,7 +5,7 @@ Logical Planner - FIXED VERSION
 Converts AST to Logical Execution Plans with proper OPTIONAL MATCH handling
 """
 
-from typing import Optional
+from typing import List, Dict, Any, Optional, Union, Set
 from .ast_nodes import *
 from .logical_operators import *
 
@@ -18,7 +18,7 @@ class LogicalPlanner:
         """Convert AST to logical execution plan"""
         
         # Start with data sourcing operations
-        plan = self._create_data_source_plan(ast)
+        plan = self.create_data_source_plan(ast)
         
         # Handle OPTIONAL MATCH clauses - FIXED
         if ast.optional_match_clauses and plan:
@@ -83,7 +83,7 @@ class LogicalPlanner:
         
         return current_plan
 
-    def _create_data_source_plan(self, ast: Query) -> Optional[LogicalOperator]:
+    def create_data_source_plan(self, ast: Query) -> LogicalOperator | None:
         """Create the initial data sourcing part of the plan"""
 
         if not ast.match_clauses:
@@ -132,7 +132,7 @@ class LogicalPlanner:
 
         return None
 
-    def _create_pattern_plan(self, pattern: Pattern) -> Optional[LogicalOperator]:
+    def create_data_source_plan(self, ast: Query):
         """Create logical plan for a pattern - FIXED"""
         
         if not pattern.elements:
