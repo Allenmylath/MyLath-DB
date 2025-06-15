@@ -1,4 +1,4 @@
-# mylathdb/execution_engine/__init__.py
+# mylathdb/execution_engine/__init__.py - CLEAN VERSION (NO MOCKS)
 
 """
 MyLathDB Execution Engine

@@ -290,4 +290,63 @@ class MyLathDB:
         
         redis_client = self.engine.redis_executor.redis
         
-        for edge in
+        for edge in edges:
+            if len(edge) >= 3:
+                src_id, rel_type, dest_id = edge[:3]
+                
+                # Generate edge ID
+                edge_id = f"{src_id}_{rel_type}_{dest_id}"
+                
+                # Store edge endpoints
+                redis_client.set(f"edge_endpoints:{edge_id}", f"{src_id}|{dest_id}|{rel_type}")
+                
+                # Create relationship indexes
+                redis_client.sadd(f"out:{src_id}:{rel_type}", edge_id)
+                redis_client.sadd(f"in:{dest_id}:{rel_type}", edge_id)
+                redis_client.sadd(f"rel:{rel_type}", edge_id)
+    
+    def _group_edges_by_type(self, edges: list) -> dict:
+        """Group edges by relationship type"""
+        grouped = {}
+        for edge in edges:
+            if len(edge) >= 3:
+                src_id, rel_type, dest_id = edge[:3]
+                if rel_type not in grouped:
+                    grouped[rel_type] = []
+                grouped[rel_type].append((src_id, dest_id))
+        return grouped
+
+
+# =============================================================================
+# CONVENIENCE FUNCTIONS
+# =============================================================================
+
+def execute_query(cypher_query: str, database: MyLathDB = None, **kwargs):
+    """
+    Convenience function to execute a Cypher query
+    
+    Args:
+        cypher_query: Cypher query string
+        database: MyLathDB instance (creates new one if None)
+        **kwargs: Additional options
+        
+    Returns:
+        ExecutionResult
+    """
+    if database is None:
+        database = MyLathDB()
+    
+    return database.execute_query(cypher_query, **kwargs)
+
+
+def create_database(**kwargs) -> MyLathDB:
+    """
+    Create a new MyLathDB database instance
+    
+    Args:
+        **kwargs: Configuration options
+        
+    Returns:
+        MyLathDB instance
+    """
+    return MyLathDB(**kwargs)

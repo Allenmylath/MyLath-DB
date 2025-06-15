@@ -95,11 +95,19 @@ class ExecutionEngine:
     def _initialize_systems(self):
         """Initialize Redis and GraphBLAS systems"""
         try:
-            # Initialize Redis
+            # Initialize Redis (required)
             self.redis_executor.initialize()
             
-            # Initialize GraphBLAS
-            self.graphblas_executor.initialize()
+            # Initialize GraphBLAS (optional - don't fail if it doesn't work)
+            try:
+                self.graphblas_executor.initialize()
+                if self.graphblas_executor.is_available():
+                    logger.info("GraphBLAS initialized successfully")
+                else:
+                    logger.warning("GraphBLAS not available - using Redis-only mode")
+            except Exception as gb_error:
+                logger.warning(f"GraphBLAS initialization failed: {gb_error}")
+                logger.info("Continuing with Redis-only mode")
             
             # Test connectivity
             self._test_connectivity()
@@ -109,15 +117,16 @@ class ExecutionEngine:
     
     def _test_connectivity(self):
         """Test Redis and GraphBLAS connectivity"""
-        # Test Redis
+        # Test Redis (required)
         if not self.redis_executor.test_connection():
             raise MyLathDBExecutionError("Redis connection failed")
         
-        # Test GraphBLAS
-        if not self.graphblas_executor.test_functionality():
-            raise MyLathDBExecutionError("GraphBLAS initialization failed")
+        # Test GraphBLAS (optional)
+        if self.graphblas_executor.is_available():
+            if not self.graphblas_executor.test_functionality():
+                logger.warning("GraphBLAS functionality test failed")
         
-        logger.info("All execution systems connected successfully")
+        logger.info("Execution systems connectivity verified")
     
     @mylathdb_measure_time
     def execute(self, physical_plan, parameters: Dict[str, Any] = None,

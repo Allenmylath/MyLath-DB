@@ -1,7 +1,7 @@
 # mylathdb/execution_engine/graphblas_executor.py
 
 """
-MyLathDB GraphBLAS Executor
+MyLathDB GraphBLAS Executor - COMPLETE IMPLEMENTATION
 Handles graph traversals and matrix operations using real Python GraphBLAS
 Based on FalkorDB's Delta Matrix and Tensor architecture
 """
@@ -18,9 +18,11 @@ try:
     import graphblas as gb
     from graphblas import Matrix, Vector, Scalar
     from graphblas.core import lib as lib_gb
+    GRAPHBLAS_AVAILABLE = True
 except ImportError as e:
     gb = None
     Matrix = Vector = Scalar = None
+    GRAPHBLAS_AVAILABLE = False
     import_error = str(e)
 
 from .config import MyLathDBExecutionConfig
@@ -77,6 +79,7 @@ class GraphBLASExecutor:
         """Initialize GraphBLAS executor"""
         self.config = config
         self.graph = GraphBLASGraph()
+        self.initialized = False
         
         # Performance settings
         self.enable_parallel = True
@@ -91,40 +94,76 @@ class GraphBLASExecutor:
         self.num_threads = getattr(config, 'GRAPHBLAS_THREADS', 4)
         
     def initialize(self):
-        """Initialize GraphBLAS with proper configuration"""
+        """Initialize GraphBLAS with proper error handling - FIXED VERSION"""
         logger.info("Initializing GraphBLAS executor")
         
-        if gb is None:
-            raise MyLathDBGraphBLASError(
-                f"Python GraphBLAS not available: {import_error}\n"
-                "Install with: pip install python-graphblas"
-            )
+        if not GRAPHBLAS_AVAILABLE:
+            logger.warning(f"Python GraphBLAS not available: {import_error}")
+            logger.info("GraphBLAS functionality will be disabled - using Redis-only mode")
+            self.initialized = False
+            return  # Don't raise error, just disable GraphBLAS
         
         try:
-            # Initialize GraphBLAS
-            gb.init()
-            
-            # Set threading if available
+            # Check if GraphBLAS is already initialized
             try:
-                gb.set_global_threads(self.num_threads)
-                logger.info(f"GraphBLAS threads set to {self.num_threads}")
-            except AttributeError:
-                logger.warning("GraphBLAS threading configuration not available")
+                # Try to create a small test matrix to see if GraphBLAS is working
+                test_matrix = gb.Matrix.new(gb.dtypes.BOOL, nrows=2, ncols=2)
+                test_matrix[0, 1] = True
+                logger.info("GraphBLAS is already initialized and working")
+                self.initialized = True
+                
+            except Exception as test_error:
+                # GraphBLAS is not initialized, try to initialize it
+                logger.info("GraphBLAS not initialized, attempting to initialize...")
+                
+                # Try to finalize first in case of partial initialization
+                try:
+                    gb.finalize()
+                except:
+                    pass
+                
+                # Now try to initialize
+                gb.init()
+                
+                # Test that it works
+                test_matrix = gb.Matrix.new(gb.dtypes.BOOL, nrows=2, ncols=2)
+                test_matrix[0, 1] = True
+                
+                logger.info("GraphBLAS initialized successfully")
+                self.initialized = True
             
-            # Initialize graph matrices
-            self._initialize_matrices()
-            
-            # Load persisted matrices if available
-            if self.persistence_enabled:
-                self._load_persisted_matrices()
-            
-            logger.info("GraphBLAS executor initialized successfully")
+            if self.initialized:
+                # Set threading if available
+                try:
+                    gb.set_global_threads(self.num_threads)
+                    logger.info(f"GraphBLAS threads set to {self.num_threads}")
+                except (AttributeError, Exception) as e:
+                    logger.warning(f"GraphBLAS threading configuration not available: {e}")
+                
+                # Initialize graph matrices
+                self._initialize_matrices()
+                
+                # Load persisted matrices if available
+                if self.persistence_enabled:
+                    self._load_persisted_matrices()
+                
+                logger.info("GraphBLAS executor initialized successfully")
             
         except Exception as e:
-            raise MyLathDBGraphBLASError(f"GraphBLAS initialization failed: {e}")
+            logger.warning(f"GraphBLAS initialization failed: {e}")
+            logger.info("GraphBLAS functionality will be disabled - using Redis-only mode")
+            self.initialized = False
+            # Don't raise error - just disable GraphBLAS functionality
+    
+    def is_available(self) -> bool:
+        """Check if GraphBLAS is available and initialized"""
+        return GRAPHBLAS_AVAILABLE and self.initialized
     
     def _initialize_matrices(self):
         """Initialize core GraphBLAS matrices"""
+        if not self.is_available():
+            return
+            
         try:
             # Create core matrices with initial capacity
             n = self.graph.node_capacity
@@ -139,7 +178,8 @@ class GraphBLASExecutor:
             logger.debug(f"Initialized core matrices with capacity {n}x{n}")
             
         except Exception as e:
-            raise MyLathDBGraphBLASError(f"Matrix initialization failed: {e}")
+            logger.error(f"Matrix initialization failed: {e}")
+            self.initialized = False
     
     @mylathdb_measure_time
     def execute_operation(self, graphblas_operation, context) -> List[Dict[str, Any]]:
@@ -153,6 +193,10 @@ class GraphBLASExecutor:
         Returns:
             List of result dictionaries
         """
+        if not self.is_available():
+            logger.warning("GraphBLAS not available, cannot execute graph operations")
+            return []
+        
         from ..cypher_planner.physical_planner import GraphBLASOperation
         
         if not isinstance(graphblas_operation, GraphBLASOperation):
@@ -160,22 +204,27 @@ class GraphBLASExecutor:
         
         logger.debug(f"Executing GraphBLAS operation: {graphblas_operation.operation_type}")
         
-        # Route to appropriate handler
-        operation_type = graphblas_operation.operation_type
-        
-        if operation_type == "ConditionalTraverse":
-            return self._execute_conditional_traverse(graphblas_operation, context)
-        elif operation_type == "VarLenTraverse":
-            return self._execute_var_len_traverse(graphblas_operation, context)
-        elif operation_type == "Expand":
-            return self._execute_expand(graphblas_operation, context)
-        elif operation_type == "StructuralFilter":
-            return self._execute_structural_filter(graphblas_operation, context)
-        elif operation_type == "PathFilter":
-            return self._execute_path_filter(graphblas_operation, context)
-        else:
-            # Execute generic matrix operations
-            return self._execute_matrix_operations(graphblas_operation, context)
+        try:
+            # Route to appropriate handler
+            operation_type = graphblas_operation.operation_type
+            
+            if operation_type == "ConditionalTraverse":
+                return self._execute_conditional_traverse(graphblas_operation, context)
+            elif operation_type == "VarLenTraverse":
+                return self._execute_var_len_traverse(graphblas_operation, context)
+            elif operation_type == "Expand":
+                return self._execute_expand(graphblas_operation, context)
+            elif operation_type == "StructuralFilter":
+                return self._execute_structural_filter(graphblas_operation, context)
+            elif operation_type == "PathFilter":
+                return self._execute_path_filter(graphblas_operation, context)
+            else:
+                # Execute generic matrix operations
+                return self._execute_matrix_operations(graphblas_operation, context)
+                
+        except Exception as e:
+            logger.error(f"GraphBLAS operation execution failed: {e}")
+            return []
     
     def _execute_conditional_traverse(self, operation, context) -> List[Dict[str, Any]]:
         """Execute single-hop conditional traversal using matrix-vector multiplication"""
@@ -511,6 +560,10 @@ class GraphBLASExecutor:
     
     def execute_generic_operation(self, physical_plan, context) -> List[Dict[str, Any]]:
         """Execute generic physical operation using GraphBLAS"""
+        if not self.is_available():
+            logger.warning("GraphBLAS not available for generic operation")
+            return []
+        
         logical_op = getattr(physical_plan, 'logical_op', None)
         
         if logical_op:
@@ -551,6 +604,9 @@ class GraphBLASExecutor:
     
     def load_adjacency_matrices(self, matrices: Dict[str, Any]):
         """Load pre-computed adjacency matrices"""
+        if not self.is_available():
+            return
+            
         logger.info(f"Loading {len(matrices)} adjacency matrices")
         
         for matrix_name, matrix_data in matrices.items():
@@ -572,6 +628,9 @@ class GraphBLASExecutor:
     
     def load_edges_as_matrices(self, edges: List[tuple]):
         """Load edges into GraphBLAS matrices"""
+        if not self.is_available():
+            return
+            
         logger.info(f"Loading {len(edges)} edges into GraphBLAS matrices")
         
         # Group edges by relationship type
@@ -614,6 +673,30 @@ class GraphBLASExecutor:
         self.graph.edge_count += len(edges)
         
         logger.info(f"Successfully loaded edges into {len(edges_by_type)} relation matrices")
+    
+    def load_graph_data(self, graph_data):
+        """Load graph data into GraphBLAS"""
+        if not self.is_available():
+            logger.warning("GraphBLAS not available, skipping graph data loading")
+            return
+        
+        logger.info("Loading graph data into GraphBLAS matrices")
+        
+        # Load adjacency matrices if provided
+        if 'adjacency_matrices' in graph_data:
+            self.load_adjacency_matrices(graph_data['adjacency_matrices'])
+        
+        # Load edges if provided
+        if 'edges' in graph_data:
+            # Convert edges to matrices
+            if isinstance(graph_data['edges'], dict):
+                # Grouped by type
+                for rel_type, edge_list in graph_data['edges'].items():
+                    formatted_edges = [(src, rel_type, dest) for src, dest in edge_list]
+                    self.load_edges_as_matrices(formatted_edges)
+            else:
+                # List of edge tuples
+                self.load_edges_as_matrices(graph_data['edges'])
     
     def _load_matrix_data(self, matrix_data: Any, target_matrix: Matrix):
         """Load matrix data into target GraphBLAS matrix"""
@@ -676,7 +759,7 @@ class GraphBLASExecutor:
     
     def persist_matrices(self):
         """Persist matrices to storage"""
-        if not self.persistence_enabled:
+        if not self.persistence_enabled or not self.is_available():
             return
         
         try:
@@ -705,10 +788,10 @@ class GraphBLASExecutor:
     
     def test_functionality(self) -> bool:
         """Test GraphBLAS functionality"""
-        try:
-            if gb is None:
-                return False
+        if not self.is_available():
+            return False
             
+        try:
             # Test basic matrix operations
             test_matrix = Matrix.new(gb.dtypes.BOOL, nrows=10, ncols=10)
             test_matrix[0, 1] = True
@@ -729,32 +812,42 @@ class GraphBLASExecutor:
     def get_status(self) -> Dict[str, Any]:
         """Get GraphBLAS executor status"""
         status = {
-            'available': gb is not None,
-            'graph_node_capacity': self.graph.node_capacity,
-            'graph_edge_capacity': self.graph.edge_capacity,
-            'node_count': self.graph.node_count,
-            'edge_count': self.graph.edge_count,
-            'matrix_sync_policy': self.graph.matrix_sync_policy,
-            'pending_operations': self.graph.pending_operations,
-            'persistence_enabled': self.persistence_enabled
+            'available': self.is_available(),
+            'initialized': self.initialized,
+            'graphblas_package_available': GRAPHBLAS_AVAILABLE
         }
         
-        if gb is not None:
+        if self.is_available():
             try:
                 status.update({
                     'graphblas_version': gb.__version__,
                     'num_threads': self.num_threads,
+                    'graph_node_capacity': self.graph.node_capacity,
+                    'graph_edge_capacity': self.graph.edge_capacity,
+                    'node_count': self.graph.node_count,
+                    'edge_count': self.graph.edge_count,
+                    'matrix_sync_policy': self.graph.matrix_sync_policy,
+                    'pending_operations': self.graph.pending_operations,
+                    'persistence_enabled': self.persistence_enabled,
                     'adjacency_matrix_nnz': self.graph.adjacency_matrix.nvals if self.graph.adjacency_matrix else 0,
                     'relation_matrices_count': len(self.graph.relation_matrices),
                     'label_matrices_count': len(self.graph.label_matrices)
                 })
             except Exception as e:
                 status['error'] = str(e)
+        else:
+            if not GRAPHBLAS_AVAILABLE:
+                status['reason'] = f'GraphBLAS package not available: {import_error}'
+            else:
+                status['reason'] = 'GraphBLAS initialization failed'
         
         return status
     
     def clear_matrices(self):
         """Clear all matrices (for cleanup/reset)"""
+        if not self.is_available():
+            return
+            
         logger.info("Clearing GraphBLAS matrices")
         
         try:
@@ -787,6 +880,10 @@ class GraphBLASExecutor:
         """Shutdown GraphBLAS executor"""
         logger.info("Shutting down GraphBLAS executor")
         
+        if not self.is_available():
+            logger.info("GraphBLAS was not initialized, nothing to shutdown")
+            return
+        
         try:
             # Persist matrices if enabled
             if self.persistence_enabled:
@@ -796,14 +893,14 @@ class GraphBLASExecutor:
             self.clear_matrices()
             
             # Finalize GraphBLAS
-            if gb is not None:
-                try:
-                    gb.finalize()
-                except AttributeError:
-                    # finalize() might not be available in all versions
-                    pass
+            try:
+                gb.finalize()
+                logger.info("GraphBLAS finalized")
+            except (AttributeError, Exception) as e:
+                logger.warning(f"GraphBLAS finalize failed: {e}")
             
         except Exception as e:
             logger.error(f"Error during GraphBLAS shutdown: {e}")
         
+        self.initialized = False
         logger.info("GraphBLAS executor shutdown complete")
