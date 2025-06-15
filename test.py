@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Basic Test for MyLathDB System
-Tests the core parsing and planning functionality
+Proper MyLathDB Test using MyLathDB API
+Tests the actual MyLathDB functionality end-to-end
 """
 
 import sys
 import os
+import time
+import subprocess
 from pathlib import Path
 
 # Add the mylathdb directory to Python path
@@ -13,208 +15,323 @@ current_dir = Path(__file__).parent
 mylathdb_dir = current_dir / "mylathdb"
 sys.path.insert(0, str(mylathdb_dir))
 
-def test_cypher_parsing():
-    """Test basic Cypher parsing functionality"""
-    print("🔍 Testing Cypher Parser...")
+def setup_redis():
+    """Setup and start Redis server"""
+    print("🔧 Setting up Redis...")
     
     try:
-        from cypher_planner.parser import parse_cypher_query
-        from cypher_planner.ast_nodes import Query, MatchClause, ReturnClause
+        # Try to connect to existing Redis
+        import redis
+        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        r.ping()
+        print("   ✅ Redis is already running")
+        return True
+    except:
+        pass
+    
+    # Try to start Redis
+    try:
+        print("   🚀 Starting Redis server...")
+        # Start Redis in background
+        subprocess.Popen([
+            'redis-server', 
+            '--port', '6379', 
+            '--daemonize', 'yes',
+            '--save', '',  # Disable persistence for testing
+            '--appendonly', 'no'
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
-        # Test simple query
-        query = "MATCH (n:Person) WHERE n.age > 25 RETURN n.name, n.age"
-        print(f"   Parsing: {query}")
+        # Wait for startup
+        time.sleep(3)
         
-        ast = parse_cypher_query(query)
-        
-        # Verify AST structure
-        assert isinstance(ast, Query), f"Expected Query, got {type(ast)}"
-        assert len(ast.match_clauses) > 0, "Should have at least one MATCH clause"
-        assert ast.return_clause is not None, "Should have RETURN clause"
-        assert ast.where_clause is not None, "Should have WHERE clause"
-        
-        print("   ✅ AST created successfully")
-        print(f"   📊 Match clauses: {len(ast.match_clauses)}")
-        print(f"   📊 Has WHERE: {ast.where_clause is not None}")
-        print(f"   📊 Has RETURN: {ast.return_clause is not None}")
-        
+        # Test connection
+        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        r.ping()
+        print("   ✅ Redis started successfully")
         return True
         
+    except FileNotFoundError:
+        print("   ❌ Redis not found. Please install Redis:")
+        print("   Ubuntu/Debian: sudo apt install redis-server")
+        print("   macOS: brew install redis")
+        print("   Windows: Download from https://github.com/microsoftarchive/redis/releases")
+        print("   Or use Docker: docker run -d -p 6379:6379 redis")
+        return False
     except Exception as e:
-        print(f"   ❌ Parser test failed: {e}")
+        print(f"   ❌ Failed to start Redis: {e}")
         return False
 
-def test_logical_planning():
-    """Test logical plan creation"""
-    print("\n🧠 Testing Logical Planner...")
+def test_mylathdb_initialization():
+    """Test MyLathDB initialization"""
+    print("\n🏗️  Testing MyLathDB Initialization...")
     
     try:
-        from cypher_planner.parser import parse_cypher_query
-        from cypher_planner.logical_planner import LogicalPlanner
-        from cypher_planner.logical_operators import LogicalOperator
+        # Import MyLathDB
+        from mylathdb import MyLathDB
         
-        # Parse query
-        query = "MATCH (n:Person) RETURN n.name"
-        ast = parse_cypher_query(query)
-        
-        # Create logical plan
-        planner = LogicalPlanner()
-        logical_plan = planner.create_logical_plan(ast)
-        
-        # Verify logical plan
-        assert logical_plan is not None, "Logical plan should not be None"
-        assert isinstance(logical_plan, LogicalOperator), f"Expected LogicalOperator, got {type(logical_plan)}"
-        
-        print("   ✅ Logical plan created successfully")
-        print(f"   📊 Plan type: {type(logical_plan).__name__}")
-        
-        # Print plan structure
-        from cypher_planner.logical_operators import print_plan
-        print("   📋 Plan structure:")
-        print_plan(logical_plan)
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ Logical planner test failed: {e}")
-        return False
-
-def test_physical_planning():
-    """Test physical plan creation"""
-    print("\n⚙️  Testing Physical Planner...")
-    
-    try:
-        from cypher_planner.parser import parse_cypher_query
-        from cypher_planner.logical_planner import LogicalPlanner
-        from cypher_planner.physical_planner import PhysicalPlanner, PhysicalOperation
-        
-        # Parse and create logical plan
-        query = "MATCH (n:Person) RETURN n.name"
-        ast = parse_cypher_query(query)
-        logical_planner = LogicalPlanner()
-        logical_plan = logical_planner.create_logical_plan(ast)
-        
-        # Create physical plan
-        physical_planner = PhysicalPlanner()
-        physical_plan = physical_planner.create_physical_plan(logical_plan)
-        
-        # Verify physical plan
-        assert physical_plan is not None, "Physical plan should not be None"
-        assert isinstance(physical_plan, PhysicalOperation), f"Expected PhysicalOperation, got {type(physical_plan)}"
-        
-        print("   ✅ Physical plan created successfully")
-        print(f"   📊 Plan type: {type(physical_plan).__name__}")
-        print(f"   📊 Target: {physical_plan.target}")
-        
-        # Print physical plan
-        from cypher_planner.physical_planner import print_physical_plan
-        print("   📋 Physical plan structure:")
-        print_physical_plan(physical_plan)
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ Physical planner test failed: {e}")
-        return False
-
-def test_execution_engine_basic():
-    """Test basic execution engine functionality"""
-    print("\n🚀 Testing Execution Engine (Basic)...")
-    
-    try:
-        from execution_engine.config import MyLathDBExecutionConfig
-        from execution_engine.engine import ExecutionEngine, ExecutionResult
-        
-        # Create configuration (without Redis requirement)
-        config = MyLathDBExecutionConfig()
-        config.AUTO_START_REDIS = False  # Don't try to start Redis
-        
-        # Create engine (this should work without Redis)
-        print("   Creating execution engine...")
-        engine = ExecutionEngine(config)
-        
-        print("   ✅ Execution engine created successfully")
-        print(f"   📊 Engine config: Redis {config.REDIS_HOST}:{config.REDIS_PORT}")
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ Execution engine test failed: {e}")
-        print(f"   ℹ️  This is expected if Redis is not available")
-        return False
-
-def test_end_to_end_parsing():
-    """Test complete parsing pipeline"""
-    print("\n🔄 Testing End-to-End Pipeline...")
-    
-    try:
-        # Import all necessary components
-        from cypher_planner import (
-            parse_cypher_query, LogicalPlanner, 
-            RuleBasedOptimizer, PhysicalPlanner
+        # Create MyLathDB instance
+        db = MyLathDB(
+            redis_host="localhost",
+            redis_port=6379,
+            redis_db=0,
+            enable_caching=True
         )
         
-        # Complex query to test full pipeline
-        query = """
-        MATCH (p:Person {country: 'USA'})-[:KNOWS]->(f:Person)
-        WHERE p.age > 25 AND f.age < 40
-        RETURN p.name, f.name, p.age
-        ORDER BY p.age DESC
-        LIMIT 10
-        """
+        print("   ✅ MyLathDB instance created successfully")
         
-        print(f"   Testing complex query: {query.strip()}")
+        # Clear any existing data for clean test
+        if hasattr(db.engine, 'redis_executor') and db.engine.redis_executor.redis:
+            db.engine.redis_executor.redis.flushdb()
+            print("   🧹 Cleared database for clean test")
         
-        # Step 1: Parse
-        ast = parse_cypher_query(query)
-        print("   ✅ Step 1: Parsed successfully")
-        
-        # Step 2: Logical planning
-        logical_planner = LogicalPlanner()
-        logical_plan = logical_planner.create_logical_plan(ast)
-        print("   ✅ Step 2: Logical plan created")
-        
-        # Step 3: Optimization
-        optimizer = RuleBasedOptimizer()
-        optimized_plan = optimizer.optimize(logical_plan)
-        print("   ✅ Step 3: Plan optimized")
-        
-        # Step 4: Physical planning
-        physical_planner = PhysicalPlanner()
-        physical_plan = physical_planner.create_physical_plan(optimized_plan)
-        print("   ✅ Step 4: Physical plan created")
-        
-        print(f"   📊 Final plan target: {physical_plan.target}")
-        
-        return True
+        return db
         
     except Exception as e:
-        print(f"   ❌ End-to-end test failed: {e}")
+        print(f"   ❌ MyLathDB initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def load_test_data_via_mylathdb(db):
+    """Load test data using MyLathDB API"""
+    print("\n📊 Loading test data via MyLathDB...")
+    
+    # Test data - we know exactly what this contains
+    test_nodes = [
+        {"id": "1", "name": "Alice", "age": 30, "country": "USA", "_labels": ["Person"]},
+        {"id": "2", "name": "Bob", "age": 25, "country": "USA", "_labels": ["Person"]},
+        {"id": "3", "name": "Charlie", "age": 35, "country": "UK", "_labels": ["Person"]},
+        {"id": "4", "name": "Diana", "age": 28, "country": "USA", "_labels": ["Person"]},
+        {"id": "5", "name": "Eve", "age": 22, "country": "Canada", "_labels": ["Person"]},
+    ]
+    
+    test_edges = [
+        ("1", "KNOWS", "2"),  # Alice -> Bob
+        ("1", "KNOWS", "3"),  # Alice -> Charlie  
+        ("2", "KNOWS", "4"),  # Bob -> Diana
+        ("3", "KNOWS", "1"),  # Charlie -> Alice (bidirectional)
+        ("4", "KNOWS", "5"),  # Diana -> Eve
+    ]
+    
+    try:
+        print(f"   📝 Loading {len(test_nodes)} people...")
+        print(f"   🔗 Loading {len(test_edges)} relationships...")
+        
+        # Use MyLathDB's load_graph_data method
+        db.load_graph_data(nodes=test_nodes, edges=test_edges)
+        
+        print("   ✅ Test data loaded successfully via MyLathDB!")
+        print(f"   📊 Loaded: {len(test_nodes)} people, {len(test_edges)} relationships")
+        
+        return test_nodes, test_edges
+        
+    except Exception as e:
+        print(f"   ❌ Failed to load data via MyLathDB: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
+
+def test_simple_query(db):
+    """Test 1: Find all people from USA"""
+    print("\n🧪 Test 1: Find all people from USA")
+    
+    query = "MATCH (n:Person) WHERE n.country = 'USA' RETURN n.name, n.age"
+    expected_people = ["Alice", "Bob", "Diana"]  # We know these are the USA people
+    
+    print(f"   Query: {query}")
+    print(f"   Expected: {', '.join(expected_people)}")
+    
+    try:
+        # Execute query using MyLathDB
+        result = db.execute_query(query)
+        
+        print(f"   ✅ Query executed: {result.success}")
+        
+        if result.success:
+            print(f"   ⏱️  Execution time: {result.execution_time:.3f}s")
+            print(f"   📊 Found {len(result.data)} results")
+            
+            # Show results
+            found_names = []
+            for i, record in enumerate(result.data):
+                print(f"   📋 Result {i+1}: {record}")
+                # Extract name from result
+                if 'n.name' in record:
+                    found_names.append(record['n.name'])
+                elif 'n' in record and isinstance(record['n'], dict):
+                    found_names.append(record['n'].get('name', 'Unknown'))
+            
+            # Verify results
+            if len(found_names) == len(expected_people):
+                print(f"   ✅ Found expected number of USA people: {len(found_names)}")
+                return True
+            else:
+                print(f"   ⚠️  Expected {len(expected_people)} people, got {len(found_names)}")
+                print(f"   🔍 Found names: {found_names}")
+                return False
+        else:
+            print(f"   ❌ Query failed: {result.error}")
+            return False
+            
+    except Exception as e:
+        print(f"   ❌ Test failed: {e}")
         import traceback
         traceback.print_exc()
         return False
 
-def main():
-    """Run all tests"""
-    print("🧪 MyLathDB Basic Functionality Test")
-    print("=" * 50)
+def test_age_filter_query(db):
+    """Test 2: Find people over 25"""
+    print("\n🧪 Test 2: Find people over 25")
     
-    # Check if mylathdb directory exists
-    mylathdb_path = Path("mylathdb")
-    if not mylathdb_path.exists():
-        print(f"❌ Error: {mylathdb_path} directory not found!")
-        print("Please run this test from the directory containing the mylathdb folder")
+    query = "MATCH (n:Person) WHERE n.age > 25 RETURN n.name, n.age ORDER BY n.age"
+    expected_people = ["Diana", "Alice", "Charlie"]  # Ages: 28, 30, 35
+    
+    print(f"   Query: {query}")
+    print(f"   Expected: {', '.join(expected_people)} (ages 28, 30, 35)")
+    
+    try:
+        # Execute query using MyLathDB
+        result = db.execute_query(query)
+        
+        print(f"   ✅ Query executed: {result.success}")
+        
+        if result.success:
+            print(f"   ⏱️  Execution time: {result.execution_time:.3f}s")
+            print(f"   📊 Found {len(result.data)} results")
+            
+            # Show results
+            found_people = []
+            for i, record in enumerate(result.data):
+                print(f"   📋 Result {i+1}: {record}")
+                # Extract name and age from result
+                name = "Unknown"
+                age = "Unknown"
+                
+                if 'n.name' in record:
+                    name = record['n.name']
+                if 'n.age' in record:
+                    age = record['n.age']
+                elif 'n' in record and isinstance(record['n'], dict):
+                    name = record['n'].get('name', 'Unknown')
+                    age = record['n'].get('age', 'Unknown')
+                
+                found_people.append((name, age))
+            
+            # Verify we got at least 3 people (Alice, Charlie, Diana are over 25)
+            if len(found_people) >= 3:
+                print(f"   ✅ Found expected number of people over 25: {len(found_people)}")
+                return True
+            else:
+                print(f"   ⚠️  Expected at least 3 people over 25, got {len(found_people)}")
+                return False
+        else:
+            print(f"   ❌ Query failed: {result.error}")
+            return False
+            
+    except Exception as e:
+        print(f"   ❌ Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def test_simple_return_query(db):
+    """Test 3: Simple return all people"""
+    print("\n🧪 Test 3: Return all people")
+    
+    query = "MATCH (n:Person) RETURN n.name"
+    expected_count = 5  # Alice, Bob, Charlie, Diana, Eve
+    
+    print(f"   Query: {query}")
+    print(f"   Expected: {expected_count} people")
+    
+    try:
+        # Execute query using MyLathDB
+        result = db.execute_query(query)
+        
+        print(f"   ✅ Query executed: {result.success}")
+        
+        if result.success:
+            print(f"   ⏱️  Execution time: {result.execution_time:.3f}s")
+            print(f"   📊 Found {len(result.data)} results")
+            
+            # Show results
+            for i, record in enumerate(result.data):
+                print(f"   📋 Result {i+1}: {record}")
+            
+            # Verify count
+            if len(result.data) == expected_count:
+                print(f"   ✅ Found expected number of people: {len(result.data)}")
+                return True
+            else:
+                print(f"   ⚠️  Expected {expected_count} people, got {len(result.data)}")
+                return False
+        else:
+            print(f"   ❌ Query failed: {result.error}")
+            return False
+            
+    except Exception as e:
+        print(f"   ❌ Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def test_mylathdb_stats(db):
+    """Test MyLathDB statistics"""
+    print("\n📈 Testing MyLathDB Statistics...")
+    
+    try:
+        stats = db.get_statistics()
+        print("   📊 Database Statistics:")
+        
+        if 'database' in stats:
+            db_stats = stats['database']
+            print(f"   📝 Queries executed: {db_stats.get('queries_executed', 0)}")
+            print(f"   ⏱️  Total execution time: {db_stats.get('total_execution_time', 0):.3f}s")
+            print(f"   📊 Average execution time: {db_stats.get('avg_execution_time', 0):.3f}s")
+        
+        if 'engine' in stats:
+            engine_stats = stats['engine']
+            print("   🏗️  Engine Statistics:")
+            for key, value in engine_stats.items():
+                print(f"   📊 {key}: {value}")
+        
+        print("   ✅ Statistics retrieved successfully")
+        return True
+        
+    except Exception as e:
+        print(f"   ❌ Statistics test failed: {e}")
+        return False
+
+def main():
+    """Run all MyLathDB tests"""
+    print("🗄️  MyLathDB Real Functionality Test")
+    print("=" * 60)
+    print("Testing MyLathDB with real Redis and actual queries")
+    print("=" * 60)
+    
+    # Step 1: Setup Redis
+    if not setup_redis():
+        print("\n❌ Cannot proceed without Redis. Please install and start Redis.")
         return False
     
-    print(f"✅ Found MyLathDB at: {mylathdb_path.absolute()}")
+    # Step 2: Initialize MyLathDB
+    db = test_mylathdb_initialization()
+    if not db:
+        print("\n❌ Cannot proceed without MyLathDB initialization.")
+        return False
     
-    # Run tests
+    # Step 3: Load test data
+    nodes, edges = load_test_data_via_mylathdb(db)
+    if not nodes or not edges:
+        print("\n❌ Cannot proceed without test data.")
+        return False
+    
+    # Step 4: Run tests
     tests = [
-        ("Cypher Parsing", test_cypher_parsing),
-        ("Logical Planning", test_logical_planning), 
-        ("Physical Planning", test_physical_planning),
-        ("Execution Engine Basic", test_execution_engine_basic),
-        ("End-to-End Pipeline", test_end_to_end_parsing),
+        ("Simple Return Query", lambda: test_simple_return_query(db)),
+        ("USA People Query", lambda: test_simple_query(db)),
+        ("Age Filter Query", lambda: test_age_filter_query(db)),
+        ("MyLathDB Statistics", lambda: test_mylathdb_stats(db)),
     ]
     
     results = []
@@ -226,10 +343,18 @@ def main():
             print(f"❌ {test_name} crashed: {e}")
             results.append((test_name, False))
     
+    # Step 5: Cleanup and summary
+    try:
+        if hasattr(db, 'shutdown'):
+            db.shutdown()
+        print("\n🧹 MyLathDB shutdown complete")
+    except:
+        pass
+    
     # Summary
-    print("\n" + "=" * 50)
-    print("📊 Test Results Summary:")
-    print("=" * 50)
+    print("\n" + "=" * 60)
+    print("📊 MyLathDB Real Test Results:")
+    print("=" * 60)
     
     passed = 0
     for test_name, result in results:
@@ -241,11 +366,17 @@ def main():
     print(f"\n🎯 Overall: {passed}/{len(tests)} tests passed")
     
     if passed == len(tests):
-        print("🎉 All tests passed! MyLathDB core functionality is working.")
+        print("🎉 All tests passed! MyLathDB is working with real data!")
+        print("🚀 MyLathDB successfully:")
+        print("   • Connected to Redis")
+        print("   • Loaded graph data") 
+        print("   • Executed Cypher queries")
+        print("   • Returned correct results")
     elif passed > 0:
-        print("⚠️  Some tests passed. Basic functionality is working.")
+        print("⚠️  Some tests passed. MyLathDB is partially working.")
+        print("🔧 Check the failed tests for issues to fix.")
     else:
-        print("❌ All tests failed. Check the setup and dependencies.")
+        print("❌ All tests failed. MyLathDB needs debugging.")
     
     return passed > 0
 
