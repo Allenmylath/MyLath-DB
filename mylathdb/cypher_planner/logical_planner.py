@@ -83,7 +83,7 @@ class LogicalPlanner:
         
         return current_plan
 
-    def create_data_source_plan(self, ast: Query) -> LogicalOperator | None:
+    def create_data_source_plan(self, ast: Query) -> LogicalOperator:
         """Create the initial data sourcing part of the plan"""
 
         if not ast.match_clauses:
@@ -132,7 +132,7 @@ class LogicalPlanner:
 
         return None
 
-    def create_data_source_plan(self, ast: Query):
+    def _create_pattern_plan(self, pattern):
         """Create logical plan for a pattern - FIXED"""
         
         if not pattern.elements:

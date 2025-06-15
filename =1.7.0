@@ -1,0 +1,26 @@
+Collecting python-graphblas
+  Downloading python_graphblas-2025.2.0-py3-none-any.whl.metadata (29 kB)
+Requirement already satisfied: scipy in /home/codespace/.local/lib/python3.12/site-packages (1.15.2)
+Requirement already satisfied: numpy>=1.23 in /home/codespace/.local/lib/python3.12/site-packages (from python-graphblas) (2.2.4)
+Collecting donfig>=0.6 (from python-graphblas)
+  Downloading donfig-0.8.1.post1-py3-none-any.whl.metadata (5.0 kB)
+Requirement already satisfied: pyyaml>=5.4 in /home/codespace/.local/lib/python3.12/site-packages (from python-graphblas) (6.0.2)
+Collecting suitesparse-graphblas<10,>=7.4.0.0 (from python-graphblas)
+  Downloading suitesparse_graphblas-9.4.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (17 kB)
+Collecting numba>=0.55 (from python-graphblas)
+  Downloading numba-0.61.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.8 kB)
+Requirement already satisfied: cffi>=1.15 in /home/codespace/.local/lib/python3.12/site-packages (from suitesparse-graphblas<10,>=7.4.0.0->python-graphblas) (1.17.1)
+Requirement already satisfied: pycparser in /home/codespace/.local/lib/python3.12/site-packages (from cffi>=1.15->suitesparse-graphblas<10,>=7.4.0.0->python-graphblas) (2.22)
+Collecting llvmlite<0.45,>=0.44.0dev0 (from numba>=0.55->python-graphblas)
+  Downloading llvmlite-0.44.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (5.0 kB)
+Downloading python_graphblas-2025.2.0-py3-none-any.whl (352 kB)
+Downloading suitesparse_graphblas-9.4.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (18.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 18.5/18.5 MB 25.3 MB/s eta 0:00:00
+Downloading donfig-0.8.1.post1-py3-none-any.whl (21 kB)
+Downloading numba-0.61.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (3.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.9/3.9 MB 42.9 MB/s eta 0:00:00
+Downloading llvmlite-0.44.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (42.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 42.4/42.4 MB 39.9 MB/s eta 0:00:00
+Installing collected packages: llvmlite, donfig, suitesparse-graphblas, numba, python-graphblas
+
+Successfully installed donfig-0.8.1.post1 llvmlite-0.44.0 numba-0.61.2 python-graphblas-2025.2.0 suitesparse-graphblas-9.4.5.0

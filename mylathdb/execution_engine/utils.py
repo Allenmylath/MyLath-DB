@@ -72,4 +72,4 @@ def safe_get_nested(data: Dict[str, Any], path: str, default=None):
         return value
     except (KeyError, TypeError):
         return default
-                    joined_results
+                  
