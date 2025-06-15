@@ -1,7 +1,7 @@
 # mylathdb/execution_engine/redis_executor.py
 
 """
-MyLathDB Redis Executor
+MyLathDB Redis Executor - FIXED VERSION
 Handles Redis operations for node/edge storage and property access
 Based on FalkorDB's Redis integration patterns
 """
@@ -194,7 +194,7 @@ class RedisExecutor:
     @mylathdb_measure_time
     def execute_operation(self, redis_operation, context) -> List[Dict[str, Any]]:
         """
-        Execute Redis operation from physical plan
+        Execute Redis operation from physical plan - FIXED VERSION
         
         Args:
             redis_operation: RedisOperation from physical planner
@@ -210,56 +210,65 @@ class RedisExecutor:
         
         logger.debug(f"Executing Redis operation: {redis_operation.operation_type}")
         
-        # Route to appropriate handler based on operation type
+        # FIXED: Route to appropriate handler based on operation type
         operation_type = redis_operation.operation_type
+        logical_op = getattr(redis_operation, 'logical_op', None)
         
-        if operation_type == "NodeByLabelScan":
-            return self._execute_node_by_label_scan(redis_operation, context)
-        elif operation_type == "AllNodeScan":
-            return self._execute_all_node_scan(redis_operation, context)
-        elif operation_type == "PropertyScan":
-            return self._execute_property_scan(redis_operation, context)
-        elif operation_type == "PropertyFilter":
-            return self._execute_property_filter(redis_operation, context)
+        if operation_type == "NodeByLabelScan" and logical_op:
+            return self._execute_node_by_label_scan_fixed(logical_op, context)
+        elif operation_type == "AllNodeScan" and logical_op:
+            return self._execute_all_node_scan_fixed(logical_op, context)
+        elif operation_type == "PropertyScan" and logical_op:
+            return self._execute_property_scan_fixed(logical_op, context)
+        elif operation_type == "NodeScan" and logical_op:
+            return self._execute_node_scan_fixed(logical_op, context)
+        elif operation_type == "PropertyFilter" and logical_op:
+            return self._execute_property_filter_fixed(logical_op, context)
         elif operation_type == "Project":
-            return self._execute_project(redis_operation, context)
+            return self._execute_project_fixed(redis_operation, context)
         elif operation_type == "OrderBy":
-            return self._execute_order_by(redis_operation, context)
+            return self._execute_order_by_fixed(redis_operation, context)
         elif operation_type == "Limit":
-            return self._execute_limit(redis_operation, context)
+            return self._execute_limit_fixed(redis_operation, context)
         else:
-            # Execute generic Redis commands
-            return self._execute_redis_commands(redis_operation, context)
+            # Execute Redis commands directly
+            return self._execute_redis_commands_fixed(redis_operation, context)
     
-    def _execute_node_by_label_scan(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute NodeByLabelScan using Redis label indexes"""
-        logical_op = operation.logical_op
+    def _execute_node_by_label_scan_fixed(self, logical_op, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute NodeByLabelScan using Redis label indexes"""
+        
+        logger.debug(f"NodeByLabelScan for variable '{logical_op.variable}' with label '{logical_op.label}'")
         
         # Get node IDs with specified label
         label_key = self.storage.LABEL_NODES_KEY.format(label=logical_op.label)
         node_ids = self.redis.smembers(label_key)
         
+        logger.debug(f"Found {len(node_ids)} nodes with label '{logical_op.label}': {list(node_ids)}")
+        
         # Apply property filters if specified
         if logical_op.properties:
             filtered_ids = self._filter_nodes_by_properties(node_ids, logical_op.properties)
+            logger.debug(f"After property filtering: {len(filtered_ids)} nodes")
         else:
             filtered_ids = node_ids
         
-        # Fetch node data
+        # Fetch node data and format results
         results = []
         for node_id in filtered_ids:
-            node_data = self._get_node_data(node_id)
+            node_data = self._get_node_data_complete(node_id)
             if node_data:
-                node_data['_id'] = node_id
-                node_data['_labels'] = [logical_op.label]
-                results.append({logical_op.variable: node_data})
+                # Format result with variable name as key
+                result_record = {logical_op.variable: node_data}
+                results.append(result_record)
+                logger.debug(f"Added result for node {node_id}: {result_record}")
         
-        logger.debug(f"NodeByLabelScan returned {len(results)} nodes")
+        logger.debug(f"NodeByLabelScan returned {len(results)} results")
         return results
     
-    def _execute_all_node_scan(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute AllNodeScan by scanning all nodes"""
-        logical_op = operation.logical_op
+    def _execute_all_node_scan_fixed(self, logical_op, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute AllNodeScan by scanning all nodes"""
+        
+        logger.debug(f"AllNodeScan for variable '{logical_op.variable}'")
         
         # Get all node IDs using key pattern scan
         node_keys = []
@@ -269,21 +278,24 @@ class RedisExecutor:
         
         # Extract node IDs
         node_ids = [key.split(':')[1] for key in node_keys]
+        logger.debug(f"Found {len(node_ids)} total nodes: {node_ids}")
         
-        # Fetch node data
+        # Fetch node data and format results
         results = []
         for node_id in node_ids:
-            node_data = self._get_node_data(node_id)
+            node_data = self._get_node_data_complete(node_id)
             if node_data:
-                node_data['_id'] = node_id
-                results.append({logical_op.variable: node_data})
+                # Format result with variable name as key
+                result_record = {logical_op.variable: node_data}
+                results.append(result_record)
         
-        logger.debug(f"AllNodeScan returned {len(results)} nodes")
+        logger.debug(f"AllNodeScan returned {len(results)} results")
         return results
     
-    def _execute_property_scan(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute PropertyScan using property indexes"""
-        logical_op = operation.logical_op
+    def _execute_property_scan_fixed(self, logical_op, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute PropertyScan using property indexes"""
+        
+        logger.debug(f"PropertyScan for variable '{logical_op.variable}' where {logical_op.property_key} = {logical_op.property_value}")
         
         # Get node IDs with specified property value
         prop_key = self.storage.PROPERTY_INDEX_KEY.format(
@@ -291,49 +303,92 @@ class RedisExecutor:
             value=logical_op.property_value
         )
         node_ids = self.redis.smembers(prop_key)
+        logger.debug(f"Found {len(node_ids)} nodes with property {logical_op.property_key}={logical_op.property_value}")
         
-        # Fetch node data
+        # Fetch node data and format results
         results = []
         for node_id in node_ids:
-            node_data = self._get_node_data(node_id)
+            node_data = self._get_node_data_complete(node_id)
             if node_data:
-                node_data['_id'] = node_id
-                results.append({logical_op.variable: node_data})
+                # Format result with variable name as key
+                result_record = {logical_op.variable: node_data}
+                results.append(result_record)
         
-        logger.debug(f"PropertyScan returned {len(results)} nodes")
+        logger.debug(f"PropertyScan returned {len(results)} results")
         return results
     
-    def _execute_property_filter(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute PropertyFilter operation"""
-        logical_op = operation.logical_op
+    def _execute_node_scan_fixed(self, logical_op, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute legacy NodeScan operation"""
+        
+        logger.debug(f"NodeScan for variable '{logical_op.variable}' with labels {logical_op.labels}")
+        
+        # If labels are specified, use label scan
+        if logical_op.labels:
+            # Use first label for scanning (could be improved to intersect multiple labels)
+            label_key = self.storage.LABEL_NODES_KEY.format(label=logical_op.labels[0])
+            node_ids = self.redis.smembers(label_key)
+            logger.debug(f"Found {len(node_ids)} nodes with label '{logical_op.labels[0]}'")
+        else:
+            # Scan all nodes
+            node_keys = []
+            for key in self.redis.scan_iter(match="node:*"):
+                if key != self.storage.NEXT_NODE_ID_KEY:
+                    node_keys.append(key)
+            node_ids = [key.split(':')[1] for key in node_keys]
+            logger.debug(f"Found {len(node_ids)} total nodes")
+        
+        # Apply property filters if specified
+        if logical_op.properties:
+            filtered_ids = self._filter_nodes_by_properties(node_ids, logical_op.properties)
+            logger.debug(f"After property filtering: {len(filtered_ids)} nodes")
+        else:
+            filtered_ids = node_ids
+        
+        # Fetch node data and format results
+        results = []
+        for node_id in filtered_ids:
+            node_data = self._get_node_data_complete(node_id)
+            if node_data:
+                # Format result with variable name as key
+                result_record = {logical_op.variable: node_data}
+                results.append(result_record)
+        
+        logger.debug(f"NodeScan returned {len(results)} results")
+        return results
+    
+    def _execute_property_filter_fixed(self, logical_op, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute PropertyFilter operation"""
+        
+        logger.debug(f"PropertyFilter for variable '{logical_op.variable}' where {logical_op.property_key} {logical_op.operator} {logical_op.value}")
         
         # For range operators, use sorted sets
         if logical_op.operator in ['>', '>=', '<', '<=']:
-            return self._execute_range_property_filter(logical_op)
-        
-        # For equality, use property indexes
-        if logical_op.operator == '=':
+            node_ids = self._execute_range_property_filter_fixed(logical_op)
+        elif logical_op.operator == '=':
+            # For equality, use property indexes
             prop_key = self.storage.PROPERTY_INDEX_KEY.format(
                 property=logical_op.property_key,
                 value=logical_op.value
             )
             node_ids = self.redis.smembers(prop_key)
         else:
-            # For other operators, scan all nodes (expensive)
-            node_ids = self._scan_all_nodes_for_property_filter(logical_op)
+            # For other operators, scan all nodes
+            node_ids = self._scan_all_nodes_for_property_filter_fixed(logical_op)
         
-        # Fetch filtered node data
+        # Fetch filtered node data and format results
         results = []
         for node_id in node_ids:
-            node_data = self._get_node_data(node_id)
+            node_data = self._get_node_data_complete(node_id)
             if node_data:
-                node_data['_id'] = node_id
-                results.append({logical_op.variable: node_data})
+                # Format result with variable name as key
+                result_record = {logical_op.variable: node_data}
+                results.append(result_record)
         
+        logger.debug(f"PropertyFilter returned {len(results)} results")
         return results
     
-    def _execute_range_property_filter(self, logical_op) -> List[Dict[str, Any]]:
-        """Execute range-based property filter using sorted sets"""
+    def _execute_range_property_filter_fixed(self, logical_op) -> Set[str]:
+        """FIXED: Execute range-based property filter using sorted sets"""
         sorted_key = self.storage.SORTED_PROPERTY_KEY.format(property=logical_op.property_key)
         
         # Build range query parameters
@@ -346,21 +401,13 @@ class RedisExecutor:
         elif logical_op.operator == '<=':
             node_ids = self.redis.zrangebyscore(sorted_key, "-inf", logical_op.value)
         else:
-            node_ids = []
+            node_ids = set()
         
-        # Fetch filtered node data
-        results = []
-        for node_id in node_ids:
-            node_data = self._get_node_data(node_id)
-            if node_data:
-                node_data['_id'] = node_id
-                results.append({logical_op.variable: node_data})
-        
-        return results
+        return set(node_ids) if node_ids else set()
     
-    def _scan_all_nodes_for_property_filter(self, logical_op) -> List[str]:
-        """Scan all nodes for property filter (fallback for unsupported operators)"""
-        node_ids = []
+    def _scan_all_nodes_for_property_filter_fixed(self, logical_op) -> Set[str]:
+        """FIXED: Scan all nodes for property filter (fallback for unsupported operators)"""
+        matching_node_ids = set()
         
         # Scan all node keys
         for key in self.redis.scan_iter(match="node:*"):
@@ -382,43 +429,44 @@ class RedisExecutor:
                     # Apply operator
                     if logical_op.operator == '!=':
                         if prop_value != logical_op.value:
-                            node_ids.append(node_id)
+                            matching_node_ids.add(node_id)
                     elif logical_op.operator == 'CONTAINS':
                         if str(logical_op.value) in str(prop_value):
-                            node_ids.append(node_id)
+                            matching_node_ids.add(node_id)
                     elif logical_op.operator == 'STARTS WITH':
                         if str(prop_value).startswith(str(logical_op.value)):
-                            node_ids.append(node_id)
+                            matching_node_ids.add(node_id)
                     elif logical_op.operator == 'ENDS WITH':
                         if str(prop_value).endswith(str(logical_op.value)):
-                            node_ids.append(node_id)
+                            matching_node_ids.add(node_id)
                             
                 except (ValueError, TypeError):
                     # Skip if type conversion fails
                     continue
         
-        return node_ids
+        return matching_node_ids
     
-    def _execute_project(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute Project operation - extract specific properties"""
-        # For Redis operations, this is typically handled by fetching specific fields
-        # This is a pass-through that would be combined with other operations
-        return []  # Project is usually combined with scan operations
-    
-    def _execute_order_by(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute OrderBy operation using Redis SORT"""
-        # Redis SORT is limited, so this might need to be done in-memory
-        # For now, return empty (ordering would be handled by coordinator)
+    def _execute_project_fixed(self, operation, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute Project operation - extract specific properties"""
+        # Project operations are typically handled by combining with other operations
+        # For now, return empty (would be handled by coordinator)
+        logger.debug("Project operation executed (pass-through)")
         return []
     
-    def _execute_limit(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute Limit operation"""
-        # Limit is typically applied to previous results
-        # This is handled by the coordinator
+    def _execute_order_by_fixed(self, operation, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute OrderBy operation"""
+        # OrderBy is typically applied to previous results by coordinator
+        logger.debug("OrderBy operation executed (pass-through)")
         return []
     
-    def _execute_redis_commands(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute raw Redis commands from the operation"""
+    def _execute_limit_fixed(self, operation, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute Limit operation"""
+        # Limit is typically applied to previous results by coordinator
+        logger.debug("Limit operation executed (pass-through)")
+        return []
+    
+    def _execute_redis_commands_fixed(self, operation, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute raw Redis commands from the operation"""
         results = []
         
         try:
@@ -428,25 +476,28 @@ class RedisExecutor:
                     continue
                 
                 # Parse and execute Redis command
-                result = self._execute_redis_command(cmd, context)
+                result = self._execute_redis_command_fixed(cmd, context)
                 if result:
                     results.extend(result)
         
         except Exception as e:
+            logger.error(f"Redis command execution failed: {e}")
             raise MyLathDBRedisError(f"Redis command execution failed: {e}")
         
         return results
     
-    def _execute_redis_command(self, cmd: str, context) -> List[Dict[str, Any]]:
-        """Execute a single Redis command and return structured results"""
-        # Simple command parsing (would need more sophisticated parsing in production)
+    def _execute_redis_command_fixed(self, cmd: str, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute a single Redis command and return structured results"""
         cmd = cmd.strip()
+        logger.debug(f"Executing Redis command: {cmd}")
         
         if cmd.startswith('SMEMBERS'):
             # Extract set key and return members
-            key = cmd.split()[1]
-            members = self.redis.smembers(key)
-            return [{'result': list(members)}]
+            parts = cmd.split()
+            if len(parts) >= 2:
+                key = parts[1]
+                members = self.redis.smembers(key)
+                return [{'members': list(members), 'key': key}]
         
         elif cmd.startswith('HGET'):
             # Extract hash key and field
@@ -462,14 +513,14 @@ class RedisExecutor:
                     return []
                 else:
                     value = self.redis.hget(key_pattern, field)
-                    return [{'result': value}] if value else []
+                    return [{'value': value, 'key': key_pattern, 'field': field}] if value else []
         
         elif cmd.startswith('SINTER'):
             # Set intersection
             sets = cmd.split()[1:]
             if sets:
                 result = self.redis.sinter(*sets)
-                return [{'result': list(result)}]
+                return [{'intersection': list(result), 'sets': sets}]
         
         elif cmd.startswith('SCAN'):
             # Key scanning
@@ -482,9 +533,10 @@ class RedisExecutor:
             for key in self.redis.scan_iter(match=pattern):
                 keys.append(key)
             
-            return [{'result': keys}]
+            return [{'keys': keys, 'pattern': pattern}]
         
-        # For other commands, try to execute directly (be careful!)
+        # For other commands, log and return empty
+        logger.warning(f"Unsupported Redis command: {cmd}")
         return []
     
     def _filter_nodes_by_properties(self, node_ids: Set[str], 
@@ -504,86 +556,82 @@ class RedisExecutor:
         
         return filtered_ids
     
-    def _get_node_data(self, node_id: str) -> Optional[Dict[str, Any]]:
-        """Get complete node data including properties and labels"""
+    def _get_node_data_complete(self, node_id: str) -> Optional[Dict[str, Any]]:
+        """FIXED: Get complete node data including properties and labels with proper typing"""
         node_key = self.storage.NODE_KEY_PATTERN.format(node_id=node_id)
         
         # Get node properties
         node_data = self.redis.hgetall(node_key)
         if not node_data:
+            logger.debug(f"No data found for node {node_id}")
             return None
         
         # Get node labels
         labels_key = self.storage.NODE_LABELS_KEY.format(node_id=node_id)
         labels = list(self.redis.smembers(labels_key))
         
-        # Combine data
-        result = dict(node_data)
+        # Build complete node data
+        result = {}
         result['_id'] = node_id
         result['_labels'] = labels
         
-        # Type conversion for numeric values
-        for key, value in result.items():
+        # Add properties with type conversion
+        for key, value in node_data.items():
             if key.startswith('_'):
                 continue
+            
+            # Try to convert to appropriate type
             try:
-                # Try to convert to number if possible
-                if '.' in str(value):
+                # Try integer first
+                if str(value).isdigit() or (str(value).startswith('-') and str(value)[1:].isdigit()):
+                    result[key] = int(value)
+                # Try float
+                elif '.' in str(value):
                     result[key] = float(value)
                 else:
-                    result[key] = int(value)
+                    # Keep as string
+                    result[key] = str(value)
             except (ValueError, TypeError):
-                # Keep as string
-                pass
+                # Keep as string if conversion fails
+                result[key] = str(value)
         
+        logger.debug(f"Retrieved complete node data for {node_id}: {result}")
         return result
     
     def execute_generic_operation(self, physical_plan, context) -> List[Dict[str, Any]]:
-        """Execute generic physical operation using Redis"""
+        """FIXED: Execute generic physical operation using Redis"""
+        
         # Try to map logical operation to Redis operations
         logical_op = getattr(physical_plan, 'logical_op', None)
         
         if logical_op:
             op_type = type(logical_op).__name__
+            logger.debug(f"Executing generic operation: {op_type}")
             
-            if 'Scan' in op_type:
-                return self._handle_generic_scan(logical_op, context)
+            if op_type == "NodeScan":
+                return self._execute_node_scan_fixed(logical_op, context)
+            elif op_type == "NodeByLabelScan":
+                return self._execute_node_by_label_scan_fixed(logical_op, context)
+            elif op_type == "AllNodeScan":
+                return self._execute_all_node_scan_fixed(logical_op, context)
+            elif op_type == "PropertyScan":
+                return self._execute_property_scan_fixed(logical_op, context)
+            elif op_type == "PropertyFilter":
+                return self._execute_property_filter_fixed(logical_op, context)
             elif 'Filter' in op_type:
-                return self._handle_generic_filter(logical_op, context)
+                return self._handle_generic_filter_fixed(logical_op, context)
         
         # Fallback to empty result
         logger.warning(f"Could not execute generic operation: {type(physical_plan)}")
         return []
     
-    def _handle_generic_scan(self, logical_op, context) -> List[Dict[str, Any]]:
-        """Handle generic scan operations"""
-        op_type = type(logical_op).__name__
+    def _handle_generic_filter_fixed(self, logical_op, context) -> List[Dict[str, Any]]:
+        """FIXED: Handle generic filter operations"""
+        logger.debug(f"Handling generic filter: {type(logical_op).__name__}")
         
-        if op_type == "NodeScan":
-            if logical_op.labels:
-                # Use first label for scanning
-                label_key = self.storage.LABEL_NODES_KEY.format(label=logical_op.labels[0])
-                node_ids = self.redis.smembers(label_key)
-                
-                # Apply property filters
-                if logical_op.properties:
-                    node_ids = self._filter_nodes_by_properties(node_ids, logical_op.properties)
-                
-                # Fetch node data
-                results = []
-                for node_id in node_ids:
-                    node_data = self._get_node_data(node_id)
-                    if node_data:
-                        results.append({logical_op.variable: node_data})
-                
-                return results
-        
-        return []
-    
-    def _handle_generic_filter(self, logical_op, context) -> List[Dict[str, Any]]:
-        """Handle generic filter operations"""
         # For generic filters, we would need to apply them to existing result sets
         # This would typically be coordinated by the ExecutionCoordinator
+        # For now, return empty
         return []
     
     # Data loading methods for graph setup
@@ -605,10 +653,11 @@ class RedisExecutor:
             properties = {k: v for k, v in node.items() 
                          if not k.startswith('_') and k != 'id'}
             
-            if pipeline:
-                pipeline.hset(node_key, mapping=properties)
-            else:
-                self.redis.hset(node_key, mapping=properties)
+            if properties:
+                if pipeline:
+                    pipeline.hset(node_key, mapping=properties)
+                else:
+                    self.redis.hset(node_key, mapping=properties)
             
             # Store node labels
             labels = node.get('_labels', [])
