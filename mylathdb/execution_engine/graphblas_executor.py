@@ -1,9 +1,9 @@
 # mylathdb/execution_engine/graphblas_executor.py
 
 """
-MyLathDB GraphBLAS Executor - COMPLETE FIXED VERSION
+MyLathDB GraphBLAS Executor - FIXED VERSION
 Handles graph traversals and matrix operations using Python GraphBLAS
-Fixed API usage and semiring compatibility issues
+Fixed API usage and removed deprecated finalize() calls
 """
 
 import time
@@ -103,20 +103,13 @@ class GraphBLASExecutor:
             return
         
         try:
-            # STEP 1: Initialize GraphBLAS library
+            # STEP 1: Initialize GraphBLAS library (FIXED - no finalize)
             if not self.gb_initialized:
                 logger.info("Initializing GraphBLAS library...")
                 
-                # Finalize first in case of partial initialization
-                try:
-                    gb.finalize()
-                    logger.debug("Finalized previous GraphBLAS instance")
-                except:
-                    pass
-                
-                # Initialize GraphBLAS
-                logger.debug("Calling gb.init()...")
-                gb.init(blocking=False)
+                # Modern python-graphblas doesn't need explicit init/finalize
+                # The library handles this automatically
+                logger.debug("GraphBLAS auto-initialization")
                 logger.info("GraphBLAS library initialized successfully")
                 self.gb_initialized = True
             
@@ -237,6 +230,181 @@ class GraphBLASExecutor:
             logger.error(f"GraphBLAS operation execution failed: {e}")
             # Return empty result instead of failing completely
             return []
+    
+    def test_functionality(self) -> bool:
+        """Test GraphBLAS functionality using correct API and compatible semirings"""
+        if not self.is_available():
+            return False
+            
+        try:
+            # Test basic matrix operations - FIXED API and semiring
+            test_matrix = gb.Matrix(gb.dtypes.BOOL, nrows=10, ncols=10)
+            test_matrix[0, 1] = True
+            test_matrix[1, 2] = True
+            
+            test_vector = gb.Vector(gb.dtypes.BOOL, size=10)
+            test_vector[0] = True
+            
+            # Test matrix-vector multiplication with compatible semiring
+            result = test_vector.vxm(test_matrix, gb.semiring.lor_land)
+            
+            return result.nvals >= 0  # Should succeed
+            
+        except Exception as e:
+            logger.error(f"GraphBLAS functionality test failed: {e}")
+            return False
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get GraphBLAS executor status"""
+        status = {
+            'available': self.is_available(),
+            'initialized': self.initialized,
+            'gb_initialized': self.gb_initialized,
+            'graphblas_package_available': GRAPHBLAS_AVAILABLE
+        }
+        
+        if self.is_available():
+            try:
+                status.update({
+                    'graphblas_version': gb.__version__,
+                    'num_threads': self.num_threads,
+                    'graph_node_capacity': self.graph.node_capacity,
+                    'graph_edge_capacity': self.graph.edge_capacity,
+                    'node_count': self.graph.node_count,
+                    'edge_count': self.graph.edge_count,
+                    'matrix_sync_policy': self.graph.matrix_sync_policy,
+                    'pending_operations': self.graph.pending_operations,
+                    'adjacency_matrix_nnz': self.graph.adjacency_matrix.nvals if self.graph.adjacency_matrix else 0,
+                    'relation_matrices_count': len(self.graph.relation_matrices),
+                    'label_matrices_count': len(self.graph.label_matrices)
+                })
+            except Exception as e:
+                status['error'] = str(e)
+        else:
+            if not GRAPHBLAS_AVAILABLE:
+                status['reason'] = f'GraphBLAS package not available: {IMPORT_ERROR}'
+            else:
+                status['reason'] = 'GraphBLAS initialization failed'
+        
+        return status
+    
+    def execute_generic_operation(self, physical_plan, context) -> List[Dict[str, Any]]:
+        """Execute generic physical operation using GraphBLAS"""
+        if not self.is_available():
+            logger.warning("GraphBLAS not available for generic operation - returning empty result")
+            return []
+        
+        logical_op = getattr(physical_plan, 'logical_op', None)
+        
+        if logical_op:
+            op_type = type(logical_op).__name__
+            
+            if 'Traverse' in op_type or 'Expand' in op_type:
+                return self._handle_generic_traversal(logical_op, context)
+        
+        logger.warning(f"Could not execute generic GraphBLAS operation: {type(physical_plan)}")
+        return []
+    
+    def load_edges_as_matrices(self, edges: List[tuple]):
+        """Load edges into GraphBLAS matrices"""
+        if not self.is_available():
+            logger.warning("GraphBLAS not available for edge loading - skipping")
+            return
+            
+        logger.info(f"Loading {len(edges)} edges into GraphBLAS matrices")
+        
+        # Group edges by relationship type
+        edges_by_type = {}
+        for edge in edges:
+            if len(edge) >= 3:
+                src_id, rel_type, dest_id = edge[:3]
+                
+                if rel_type not in edges_by_type:
+                    edges_by_type[rel_type] = []
+                
+                # Convert IDs to integers for matrix indexing
+                try:
+                    src_idx = int(src_id) - 1  # Convert to 0-based indexing
+                    dest_idx = int(dest_id) - 1
+                    edges_by_type[rel_type].append((src_idx, dest_idx))
+                except ValueError:
+                    logger.warning(f"Could not convert edge IDs to integers: {src_id}, {dest_id}")
+        
+        # Load each relationship type into its matrix
+        for rel_type, edge_list in edges_by_type.items():
+            try:
+                # Get or create relation matrix
+                if rel_type not in self.graph.relation_matrices:
+                    n = self.graph.node_capacity
+                    # FIXED API
+                    self.graph.relation_matrices[rel_type] = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
+                
+                matrix = self.graph.relation_matrices[rel_type]
+                
+                # Add edges to matrix
+                for src, dest in edge_list:
+                    if 0 <= src < matrix.nrows and 0 <= dest < matrix.ncols:
+                        matrix[src, dest] = True
+                
+                # Also add to main adjacency matrix
+                for src, dest in edge_list:
+                    if 0 <= src < self.graph.adjacency_matrix.nrows and 0 <= dest < self.graph.adjacency_matrix.ncols:
+                        self.graph.adjacency_matrix[src, dest] = True
+                
+                logger.debug(f"Loaded {len(edge_list)} edges for relationship {rel_type}")
+                
+            except Exception as e:
+                logger.error(f"Failed to load edges for {rel_type}: {e}")
+        
+        # Update statistics
+        self.graph.edge_count += len(edges)
+        
+        logger.info(f"Successfully loaded edges into {len(edges_by_type)} relation matrices")
+    
+    def load_graph_data(self, graph_data):
+        """Load graph data into GraphBLAS"""
+        if not self.is_available():
+            logger.warning("GraphBLAS not available for graph data loading - skipping")
+            return
+        
+        logger.info("Loading graph data into GraphBLAS matrices")
+        
+        # Load adjacency matrices if provided
+        if 'adjacency_matrices' in graph_data:
+            self.load_adjacency_matrices(graph_data['adjacency_matrices'])
+        
+        # Load edges if provided
+        if 'edges' in graph_data:
+            # Convert edges to matrices
+            if isinstance(graph_data['edges'], dict):
+                # Grouped by type
+                for rel_type, edge_list in graph_data['edges'].items():
+                    formatted_edges = [(src, rel_type, dest) for src, dest in edge_list]
+                    self.load_edges_as_matrices(formatted_edges)
+            else:
+                # List of edge tuples
+                self.load_edges_as_matrices(graph_data['edges'])
+    
+    def shutdown(self):
+        """Shutdown GraphBLAS executor - FIXED to not call finalize()"""
+        logger.info("Shutting down GraphBLAS executor")
+        
+        if not self.initialized:
+            logger.info("GraphBLAS was not initialized, nothing to shutdown")
+            return
+        
+        try:
+            # FIXED: Don't call gb.finalize() as it doesn't exist in current version
+            # Modern python-graphblas handles cleanup automatically
+            logger.info("GraphBLAS cleanup handled automatically by library")
+            
+        except Exception as e:
+            logger.error(f"Error during GraphBLAS shutdown: {e}")
+        
+        self.initialized = False
+        self.gb_initialized = False
+        self.graph = None
+        logger.info("GraphBLAS executor shutdown complete")
     
     def _get_relation_matrix(self, rel_types: List[str], direction: str):
         """Get or create relation matrix for given relationship types"""
@@ -362,160 +530,6 @@ class GraphBLASExecutor:
             logger.error(f"Failed to convert vector to results: {e}")
         
         return results
-    
-    def load_edges_as_matrices(self, edges: List[tuple]):
-        """Load edges into GraphBLAS matrices"""
-        if not self.is_available():
-            logger.warning("GraphBLAS not available for edge loading - skipping")
-            return
-            
-        logger.info(f"Loading {len(edges)} edges into GraphBLAS matrices")
-        
-        # Group edges by relationship type
-        edges_by_type = {}
-        for edge in edges:
-            if len(edge) >= 3:
-                src_id, rel_type, dest_id = edge[:3]
-                
-                if rel_type not in edges_by_type:
-                    edges_by_type[rel_type] = []
-                
-                # Convert IDs to integers for matrix indexing
-                try:
-                    src_idx = int(src_id) - 1  # Convert to 0-based indexing
-                    dest_idx = int(dest_id) - 1
-                    edges_by_type[rel_type].append((src_idx, dest_idx))
-                except ValueError:
-                    logger.warning(f"Could not convert edge IDs to integers: {src_id}, {dest_id}")
-        
-        # Load each relationship type into its matrix
-        for rel_type, edge_list in edges_by_type.items():
-            try:
-                # Get or create relation matrix
-                if rel_type not in self.graph.relation_matrices:
-                    n = self.graph.node_capacity
-                    # FIXED API
-                    self.graph.relation_matrices[rel_type] = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
-                
-                matrix = self.graph.relation_matrices[rel_type]
-                
-                # Add edges to matrix
-                for src, dest in edge_list:
-                    if 0 <= src < matrix.nrows and 0 <= dest < matrix.ncols:
-                        matrix[src, dest] = True
-                
-                # Also add to main adjacency matrix
-                for src, dest in edge_list:
-                    if 0 <= src < self.graph.adjacency_matrix.nrows and 0 <= dest < self.graph.adjacency_matrix.ncols:
-                        self.graph.adjacency_matrix[src, dest] = True
-                
-                logger.debug(f"Loaded {len(edge_list)} edges for relationship {rel_type}")
-                
-            except Exception as e:
-                logger.error(f"Failed to load edges for {rel_type}: {e}")
-        
-        # Update statistics
-        self.graph.edge_count += len(edges)
-        
-        logger.info(f"Successfully loaded edges into {len(edges_by_type)} relation matrices")
-    
-    def load_graph_data(self, graph_data):
-        """Load graph data into GraphBLAS"""
-        if not self.is_available():
-            logger.warning("GraphBLAS not available for graph data loading - skipping")
-            return
-        
-        logger.info("Loading graph data into GraphBLAS matrices")
-        
-        # Load adjacency matrices if provided
-        if 'adjacency_matrices' in graph_data:
-            self.load_adjacency_matrices(graph_data['adjacency_matrices'])
-        
-        # Load edges if provided
-        if 'edges' in graph_data:
-            # Convert edges to matrices
-            if isinstance(graph_data['edges'], dict):
-                # Grouped by type
-                for rel_type, edge_list in graph_data['edges'].items():
-                    formatted_edges = [(src, rel_type, dest) for src, dest in edge_list]
-                    self.load_edges_as_matrices(formatted_edges)
-            else:
-                # List of edge tuples
-                self.load_edges_as_matrices(graph_data['edges'])
-    
-    def test_functionality(self) -> bool:
-        """Test GraphBLAS functionality using correct API and compatible semirings"""
-        if not self.is_available():
-            return False
-            
-        try:
-            # Test basic matrix operations - FIXED API and semiring
-            test_matrix = gb.Matrix(gb.dtypes.BOOL, nrows=10, ncols=10)
-            test_matrix[0, 1] = True
-            test_matrix[1, 2] = True
-            
-            test_vector = gb.Vector(gb.dtypes.BOOL, size=10)
-            test_vector[0] = True
-            
-            # Test matrix-vector multiplication with compatible semiring
-            result = test_vector.vxm(test_matrix, gb.semiring.lor_land)
-            
-            return result.nvals >= 0  # Should succeed
-            
-        except Exception as e:
-            logger.error(f"GraphBLAS functionality test failed: {e}")
-            return False
-    
-    def get_status(self) -> Dict[str, Any]:
-        """Get GraphBLAS executor status"""
-        status = {
-            'available': self.is_available(),
-            'initialized': self.initialized,
-            'gb_initialized': self.gb_initialized,
-            'graphblas_package_available': GRAPHBLAS_AVAILABLE
-        }
-        
-        if self.is_available():
-            try:
-                status.update({
-                    'graphblas_version': gb.__version__,
-                    'num_threads': self.num_threads,
-                    'graph_node_capacity': self.graph.node_capacity,
-                    'graph_edge_capacity': self.graph.edge_capacity,
-                    'node_count': self.graph.node_count,
-                    'edge_count': self.graph.edge_count,
-                    'matrix_sync_policy': self.graph.matrix_sync_policy,
-                    'pending_operations': self.graph.pending_operations,
-                    'adjacency_matrix_nnz': self.graph.adjacency_matrix.nvals if self.graph.adjacency_matrix else 0,
-                    'relation_matrices_count': len(self.graph.relation_matrices),
-                    'label_matrices_count': len(self.graph.label_matrices)
-                })
-            except Exception as e:
-                status['error'] = str(e)
-        else:
-            if not GRAPHBLAS_AVAILABLE:
-                status['reason'] = f'GraphBLAS package not available: {IMPORT_ERROR}'
-            else:
-                status['reason'] = 'GraphBLAS initialization failed'
-        
-        return status
-    
-    def execute_generic_operation(self, physical_plan, context) -> List[Dict[str, Any]]:
-        """Execute generic physical operation using GraphBLAS"""
-        if not self.is_available():
-            logger.warning("GraphBLAS not available for generic operation - returning empty result")
-            return []
-        
-        logical_op = getattr(physical_plan, 'logical_op', None)
-        
-        if logical_op:
-            op_type = type(logical_op).__name__
-            
-            if 'Traverse' in op_type or 'Expand' in op_type:
-                return self._handle_generic_traversal(logical_op, context)
-        
-        logger.warning(f"Could not execute generic GraphBLAS operation: {type(physical_plan)}")
-        return []
     
     def _handle_generic_traversal(self, logical_op, context) -> List[Dict[str, Any]]:
         """Handle generic traversal operations with compatible semirings"""
@@ -923,28 +937,3 @@ class GraphBLASExecutor:
             
         except Exception as e:
             logger.error(f"Failed to clear matrices: {e}")
-    
-    def shutdown(self):
-        """Shutdown GraphBLAS executor"""
-        logger.info("Shutting down GraphBLAS executor")
-        
-        if not self.initialized:
-            logger.info("GraphBLAS was not initialized, nothing to shutdown")
-            return
-        
-        try:
-            # Finalize GraphBLAS
-            try:
-                if self.gb_initialized:
-                    gb.finalize()
-                    logger.info("GraphBLAS finalized")
-            except (AttributeError, Exception) as e:
-                logger.warning(f"GraphBLAS finalize failed: {e}")
-            
-        except Exception as e:
-            logger.error(f"Error during GraphBLAS shutdown: {e}")
-        
-        self.initialized = False
-        self.gb_initialized = False
-        self.graph = None
-        logger.info("GraphBLAS executor shutdown complete")
