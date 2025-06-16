@@ -1,4 +1,10 @@
-# Add at the top of physical_planner.py  
+# mylathdb/cypher_planner/physical_planner.py - COMPLETE FIXED VERSION
+
+"""
+Physical Planner - COMPLETE FIXED VERSION
+The critical fix: preserve logical_op references when converting to physical operations
+"""
+
 from __future__ import annotations
 from typing import List, Dict, Any, Optional, Set, Union
 from .logical_operators import *
@@ -9,7 +15,7 @@ class PhysicalOperation:
     def __init__(self, operation_type: str, target: str, logical_op: LogicalOperator = None):
         self.operation_type = operation_type
         self.target = target  # "redis", "graphblas", "coordinator"
-        self.logical_op = logical_op
+        self.logical_op = logical_op  # CRITICAL: Store reference to logical operation
         self.estimated_cost = 0.0
         self.estimated_cardinality = 0
         self.children: List['PhysicalOperation'] = []
@@ -46,7 +52,7 @@ class CoordinatorOperation(PhysicalOperation):
         self.data_transfer_ops = data_transfer_ops or []
 
 class PhysicalPlanner:
-    """ENHANCED: Physical planner with advanced optimization"""
+    """COMPLETE FIXED: Physical planner with proper logical_op preservation"""
     
     def __init__(self, statistics: ExecutionStatistics = None):
         self.statistics = statistics or ExecutionStatistics()
@@ -61,50 +67,174 @@ class PhysicalPlanner:
         return self._convert_operator(logical_plan)
     
     def _convert_operator(self, logical_op: LogicalOperator) -> PhysicalOperation:
-        """Convert a single logical operator to physical operation(s)"""
+        """FIXED: Convert a single logical operator to physical operation(s) with proper logical_op linking"""
+        
+        physical_op = None
         
         # NEW: Handle enhanced operators
         if isinstance(logical_op, NodeByLabelScan):
-            return self._convert_node_by_label_scan(logical_op)
+            physical_op = self._convert_node_by_label_scan(logical_op)
         elif isinstance(logical_op, AllNodeScan):
-            return self._convert_all_node_scan(logical_op)
+            physical_op = self._convert_all_node_scan(logical_op)
         elif isinstance(logical_op, PropertyScan):
-            return self._convert_property_scan(logical_op)
+            physical_op = self._convert_property_scan(logical_op)
         elif isinstance(logical_op, ConditionalTraverse):
-            return self._convert_conditional_traverse(logical_op)
+            physical_op = self._convert_conditional_traverse(logical_op)
         elif isinstance(logical_op, ConditionalVarLenTraverse):
-            return self._convert_var_len_traverse(logical_op)
+            physical_op = self._convert_var_len_traverse(logical_op)
         elif isinstance(logical_op, PropertyFilter):
-            return self._convert_property_filter(logical_op)
+            physical_op = self._convert_property_filter(logical_op)
         elif isinstance(logical_op, StructuralFilter):
-            return self._convert_structural_filter(logical_op)
+            physical_op = self._convert_structural_filter(logical_op)
         elif isinstance(logical_op, PathFilter):
-            return self._convert_path_filter(logical_op)
+            physical_op = self._convert_path_filter(logical_op)
         elif isinstance(logical_op, Apply):
-            return self._convert_apply(logical_op)
+            physical_op = self._convert_apply(logical_op)
         elif isinstance(logical_op, SemiApply):
-            return self._convert_semi_apply(logical_op)
+            physical_op = self._convert_semi_apply(logical_op)
         elif isinstance(logical_op, Optional):
-            return self._convert_optional(logical_op)
+            physical_op = self._convert_optional(logical_op)
         
         # EXISTING: Handle original operators
         elif isinstance(logical_op, NodeScan):
-            return self._convert_node_scan(logical_op)
+            physical_op = self._convert_node_scan(logical_op)
         elif isinstance(logical_op, Expand):
-            return self._convert_expand(logical_op)
+            physical_op = self._convert_expand(logical_op)
         elif isinstance(logical_op, Filter):
-            return self._convert_filter(logical_op)
+            physical_op = self._convert_filter(logical_op)
         elif isinstance(logical_op, Project):
-            return self._convert_project(logical_op)
+            physical_op = self._convert_project(logical_op)  # CRITICAL METHOD
         elif isinstance(logical_op, OrderBy):
-            return self._convert_order_by(logical_op)
+            physical_op = self._convert_order_by(logical_op)
         elif isinstance(logical_op, Limit):
-            return self._convert_limit(logical_op)
+            physical_op = self._convert_limit(logical_op)
         elif isinstance(logical_op, Join):
-            return self._convert_join(logical_op)
+            physical_op = self._convert_join(logical_op)
         else:
             # Default conversion
-            return self._convert_generic(logical_op)
+            physical_op = self._convert_generic(logical_op)
+        
+        # CRITICAL FIX: Ensure logical_op reference is preserved
+        if physical_op:
+            physical_op.logical_op = logical_op
+            
+            # Convert children and preserve logical_op references
+            for child_logical_op in getattr(logical_op, 'children', []):
+                child_physical_op = self._convert_operator(child_logical_op)
+                if child_physical_op:
+                    physical_op.children.append(child_physical_op)
+        
+        return physical_op
+
+    # CRITICAL METHODS - These are the key fixes:
+
+    def _convert_project(self, project: Project) -> RedisOperation:
+        """CRITICAL FIX: Convert Project operation with complete logical_op preservation"""
+        
+        redis_commands = []
+        
+        # Check if we have projections to work with
+        if hasattr(project, 'projections') and project.projections:
+            for expr, alias in project.projections:
+                if hasattr(expr, 'property_name'):  # PropertyExpression
+                    redis_commands.append(f"HGET node:{{id}} {expr.property_name}")
+                elif hasattr(expr, 'name'):  # VariableExpression
+                    redis_commands.append(f"# Return variable: {expr.name}")
+        
+        if not redis_commands:
+            redis_commands.append("# Project selected columns")
+        
+        # Create Redis operation
+        redis_op = RedisOperation("Project", redis_commands, [], project)
+        
+        # THE CRITICAL FIX: Preserve the logical operation reference
+        redis_op.logical_op = project
+        
+        # NOTE: Children will be handled by _convert_operator recursively
+        
+        return redis_op
+
+    def _convert_node_scan(self, node_scan: NodeScan) -> RedisOperation:
+        """FIXED: Convert NodeScan to Redis operations with logical_op preservation"""
+        redis_commands = []
+        index_usage = []
+        
+        if node_scan.labels:
+            for label in node_scan.labels:
+                redis_commands.append(f"SMEMBERS label:{label}")
+                index_usage.append(f"label_index:{label}")
+        
+        if node_scan.properties:
+            for prop_key, prop_value in node_scan.properties.items():
+                redis_commands.append(f"SMEMBERS prop:{prop_key}:{prop_value}")
+                index_usage.append(f"property_index:{prop_key}")
+        
+        if node_scan.labels and node_scan.properties:
+            sets_to_intersect = [f"label:{label}" for label in node_scan.labels]
+            sets_to_intersect.extend([f"prop:{k}:{v}" for k, v in node_scan.properties.items()])
+            redis_commands.append(f"SINTER {' '.join(sets_to_intersect)}")
+        
+        if not redis_commands:
+            redis_commands.append("SCAN 0 MATCH node:*")
+        
+        redis_op = RedisOperation("NodeScan", redis_commands, index_usage, node_scan)
+        
+        # CRITICAL: Preserve logical operation reference
+        redis_op.logical_op = node_scan
+        
+        return redis_op
+
+    def _convert_order_by(self, order_by: OrderBy) -> RedisOperation:
+        """FIXED: Convert OrderBy operation with logical_op preservation"""
+        redis_commands = ["# Sort results"]
+        for expr, ascending in order_by.sort_items:
+            direction = "ASC" if ascending else "DESC"
+            if hasattr(expr, 'variable') and hasattr(expr, 'property_name'):
+                redis_commands.append(f"SORT BY {expr.variable}.{expr.property_name} {direction}")
+        
+        redis_op = RedisOperation("OrderBy", redis_commands, [], order_by)
+        
+        # CRITICAL: Preserve logical operation reference
+        redis_op.logical_op = order_by
+        
+        return redis_op
+
+    def _convert_limit(self, limit: Limit) -> RedisOperation:
+        """FIXED: Convert Limit operation with logical_op preservation"""
+        redis_commands = []
+        if limit.skip > 0:
+            redis_commands.append(f"SKIP {limit.skip}")
+        if limit.count != float("inf"):
+            redis_commands.append(f"LIMIT {limit.count}")
+        
+        if not redis_commands:
+            redis_commands.append("# No limit applied")
+        
+        redis_op = RedisOperation("Limit", redis_commands, [], limit)
+        
+        # CRITICAL: Preserve logical operation reference
+        redis_op.logical_op = limit
+        
+        return redis_op
+
+    def _convert_filter(self, filter_op: Filter) -> PhysicalOperation:
+        """FIXED: Convert Filter based on filter type with logical_op preservation"""
+        if filter_op.filter_type == "property":
+            redis_commands = [f"# Apply property filter: {filter_op.condition}"]
+            
+            if isinstance(filter_op.condition, BinaryExpression):
+                if isinstance(filter_op.condition.left, PropertyExpression):
+                    prop_expr = filter_op.condition.left
+                    redis_commands.append(f"HGET node:{{id}} {prop_expr.property_name}")
+            
+            redis_op = RedisOperation("PropertyFilter", redis_commands, [], filter_op)
+        else:
+            redis_op = PhysicalOperation("Filter", "mixed", filter_op)
+        
+        # CRITICAL: Preserve logical operation reference
+        redis_op.logical_op = filter_op
+        
+        return redis_op
 
     # NEW CONVERSION METHODS:
     
@@ -134,9 +264,33 @@ class PhysicalPlanner:
         cardinality = self.statistics.get_label_cardinality(op.label)
         redis_op.estimated_cardinality = cardinality
         
-        # Add children
-        for child in op.children:
-            redis_op.children.append(self._convert_operator(child))
+        # CRITICAL: Preserve logical operation reference
+        redis_op.logical_op = op
+        
+        return redis_op
+    
+    def _convert_all_node_scan(self, op: AllNodeScan) -> RedisOperation:
+        """Convert AllNodeScan"""
+        redis_commands = ["SCAN 0 MATCH node:*"]
+        redis_op = RedisOperation("AllNodeScan", redis_commands, [], op)
+        redis_op.estimated_cardinality = self.statistics.node_count
+        
+        # CRITICAL: Preserve logical operation reference
+        redis_op.logical_op = op
+        
+        return redis_op
+    
+    def _convert_property_scan(self, op: PropertyScan) -> RedisOperation:
+        """Convert PropertyScan"""
+        redis_commands = [f"SMEMBERS prop:{op.property_key}:{op.property_value}"]
+        index_usage = [f"property_index:{op.property_key}"]
+        redis_op = RedisOperation("PropertyScan", redis_commands, index_usage, op)
+        
+        selectivity = self.statistics.get_property_selectivity("", op.property_key)
+        redis_op.estimated_cardinality = int(self.statistics.node_count * selectivity)
+        
+        # CRITICAL: Preserve logical operation reference
+        redis_op.logical_op = op
         
         return redis_op
     
@@ -164,9 +318,8 @@ class PhysicalPlanner:
         gb_op = GraphBLASOperation("ConditionalTraverse", matrix_ops, matrix_props, op)
         gb_op.estimated_cardinality = edge_cardinality // 1000
         
-        # Add children
-        for child in op.children:
-            gb_op.children.append(self._convert_operator(child))
+        # CRITICAL: Preserve logical operation reference
+        gb_op.logical_op = op
         
         return gb_op
     
@@ -203,9 +356,8 @@ class PhysicalPlanner:
         gb_op.estimated_cardinality = 1000 * op.max_length if op.max_length != float('inf') else 5000
         gb_op.memory_intensive = True
         
-        # Add children
-        for child in op.children:
-            gb_op.children.append(self._convert_operator(child))
+        # CRITICAL: Preserve logical operation reference
+        gb_op.logical_op = op
         
         return gb_op
     
@@ -235,11 +387,44 @@ class PhysicalPlanner:
         selectivity = self.statistics.get_property_selectivity(op.variable, op.property_key)
         redis_op.estimated_cardinality = int(1000 * selectivity)
         
-        # Add children
-        for child in op.children:
-            redis_op.children.append(self._convert_operator(child))
+        # CRITICAL: Preserve logical operation reference
+        redis_op.logical_op = op
         
         return redis_op
+    
+    def _convert_structural_filter(self, op: StructuralFilter) -> GraphBLASOperation:
+        """Convert StructuralFilter to GraphBLAS operations"""
+        matrix_ops = [f"# Structural filter: {op.condition}"]
+        gb_op = GraphBLASOperation("StructuralFilter", matrix_ops, {}, op)
+        
+        # CRITICAL: Preserve logical operation reference
+        gb_op.logical_op = op
+        
+        return gb_op
+    
+    def _convert_path_filter(self, op: PathFilter) -> GraphBLASOperation:
+        """Convert PathFilter to GraphBLAS path matching"""
+        matrix_ops = [
+            f"# Path filter: {'NOT ' if op.anti else ''}{op.path_pattern}",
+            "# Use path pattern matching algorithms"
+        ]
+        gb_op = GraphBLASOperation("PathFilter", matrix_ops, {'path_pattern': op.path_pattern}, op)
+        
+        # CRITICAL: Preserve logical operation reference
+        gb_op.logical_op = op
+        
+        return gb_op
+    
+    def _convert_apply(self, op: Apply) -> CoordinatorOperation:
+        """Convert Apply operation"""
+        coordination_pattern = "correlated_subquery"
+        data_transfer_ops = ["# Apply correlated subquery execution"]
+        coord_op = CoordinatorOperation("Apply", coordination_pattern, data_transfer_ops, op)
+        
+        # CRITICAL: Preserve logical operation reference
+        coord_op.logical_op = op
+        
+        return coord_op
     
     def _convert_semi_apply(self, op: SemiApply) -> CoordinatorOperation:
         """Convert SemiApply to coordinated execution"""
@@ -258,70 +443,8 @@ class PhysicalPlanner:
         coord_op = CoordinatorOperation("SemiApply", coordination_pattern, data_transfer_ops, op)
         coord_op.estimated_cardinality = int(1000 * (0.3 if not op.anti else 0.7))
         
-        # Add children
-        for child in op.children:
-            coord_op.children.append(self._convert_operator(child))
-        
-        return coord_op
-    
-    # NEW HELPER METHODS:
-    
-    def _convert_all_node_scan(self, op: AllNodeScan) -> RedisOperation:
-        """Convert AllNodeScan"""
-        redis_commands = ["SCAN 0 MATCH node:*"]
-        redis_op = RedisOperation("AllNodeScan", redis_commands, [], op)
-        redis_op.estimated_cardinality = self.statistics.node_count
-        
-        for child in op.children:
-            redis_op.children.append(self._convert_operator(child))
-        
-        return redis_op
-    
-    def _convert_property_scan(self, op: PropertyScan) -> RedisOperation:
-        """Convert PropertyScan"""
-        redis_commands = [f"SMEMBERS prop:{op.property_key}:{op.property_value}"]
-        index_usage = [f"property_index:{op.property_key}"]
-        redis_op = RedisOperation("PropertyScan", redis_commands, index_usage, op)
-        
-        selectivity = self.statistics.get_property_selectivity("", op.property_key)
-        redis_op.estimated_cardinality = int(self.statistics.node_count * selectivity)
-        
-        for child in op.children:
-            redis_op.children.append(self._convert_operator(child))
-        
-        return redis_op
-    
-    def _convert_structural_filter(self, op: StructuralFilter) -> GraphBLASOperation:
-        """Convert StructuralFilter to GraphBLAS operations"""
-        matrix_ops = [f"# Structural filter: {op.condition}"]
-        gb_op = GraphBLASOperation("StructuralFilter", matrix_ops, {}, op)
-        
-        for child in op.children:
-            gb_op.children.append(self._convert_operator(child))
-        
-        return gb_op
-    
-    def _convert_path_filter(self, op: PathFilter) -> GraphBLASOperation:
-        """Convert PathFilter to GraphBLAS path matching"""
-        matrix_ops = [
-            f"# Path filter: {'NOT ' if op.anti else ''}{op.path_pattern}",
-            "# Use path pattern matching algorithms"
-        ]
-        gb_op = GraphBLASOperation("PathFilter", matrix_ops, {'path_pattern': op.path_pattern}, op)
-        
-        for child in op.children:
-            gb_op.children.append(self._convert_operator(child))
-        
-        return gb_op
-    
-    def _convert_apply(self, op: Apply) -> CoordinatorOperation:
-        """Convert Apply operation"""
-        coordination_pattern = "correlated_subquery"
-        data_transfer_ops = ["# Apply correlated subquery execution"]
-        coord_op = CoordinatorOperation("Apply", coordination_pattern, data_transfer_ops, op)
-        
-        for child in op.children:
-            coord_op.children.append(self._convert_operator(child))
+        # CRITICAL: Preserve logical operation reference
+        coord_op.logical_op = op
         
         return coord_op
     
@@ -331,51 +454,10 @@ class PhysicalPlanner:
         data_transfer_ops = ["# Optional match with NULL handling"]
         coord_op = CoordinatorOperation("Optional", coordination_pattern, data_transfer_ops, op)
         
-        for child in op.children:
-            coord_op.children.append(self._convert_operator(child))
+        # CRITICAL: Preserve logical operation reference
+        coord_op.logical_op = op
         
         return coord_op
-    
-    def _format_range(self, operator: str, value: Any) -> str:
-        """Format range for Redis ZRANGEBYSCORE"""
-        if operator == '>':
-            return f"({value} +inf"
-        elif operator == '>=':
-            return f"{value} +inf"
-        elif operator == '<':
-            return f"-inf ({value}"
-        elif operator == '<=':
-            return f"-inf {value}"
-        return f"{value} {value}"
-    
-    # EXISTING METHODS (keep all your existing conversion methods):
-    
-    def _convert_node_scan(self, node_scan: NodeScan) -> RedisOperation:
-        """Convert NodeScan to Redis operations"""
-        redis_commands = []
-        
-        if node_scan.labels:
-            for label in node_scan.labels:
-                redis_commands.append(f"SMEMBERS label:{label}")
-        
-        if node_scan.properties:
-            for prop_key, prop_value in node_scan.properties.items():
-                redis_commands.append(f"SMEMBERS prop:{prop_key}:{prop_value}")
-        
-        if node_scan.labels and node_scan.properties:
-            sets_to_intersect = [f"label:{label}" for label in node_scan.labels]
-            sets_to_intersect.extend([f"prop:{k}:{v}" for k, v in node_scan.properties.items()])
-            redis_commands.append(f"SINTER {' '.join(sets_to_intersect)}")
-        
-        if not redis_commands:
-            redis_commands.append("SCAN 0 MATCH node:*")
-        
-        redis_op = RedisOperation("NodeScan", redis_commands)
-        
-        for child in node_scan.children:
-            redis_op.children.append(self._convert_operator(child))
-        
-        return redis_op
     
     def _convert_expand(self, expand: Expand) -> PhysicalOperation:
         """Convert Expand to GraphBLAS matrix operations"""
@@ -399,91 +481,19 @@ class PhysicalPlanner:
             else:
                 matrix_ops.append(f"result = compute_variable_path(v_{expand.from_var}, A_{rel_type}, {expand.min_length}, {expand.max_length})")
         
-        graphblas_op = GraphBLASOperation("Expand", matrix_ops)
+        graphblas_op = GraphBLASOperation("Expand", matrix_ops, {}, expand)
         
-        for child in expand.children:
-            graphblas_op.children.append(self._convert_operator(child))
+        # CRITICAL: Preserve logical operation reference
+        graphblas_op.logical_op = expand
         
         return graphblas_op
     
-    def _convert_filter(self, filter_op: Filter) -> PhysicalOperation:
-        """Convert Filter based on filter type"""
-        if filter_op.filter_type == "property":
-            redis_commands = [f"# Apply property filter: {filter_op.condition}"]
-            
-            if isinstance(filter_op.condition, BinaryExpression):
-                if isinstance(filter_op.condition.left, PropertyExpression):
-                    prop_expr = filter_op.condition.left
-                    redis_commands.append(f"HGET node:{{id}} {prop_expr.property_name}")
-            
-            redis_op = RedisOperation("PropertyFilter", redis_commands)
-        else:
-            redis_op = PhysicalOperation("Filter", "mixed")
-        
-        for child in filter_op.children:
-            redis_op.children.append(self._convert_operator(child))
-        
-        return redis_op
-    
-    def _convert_project(self, project: Project) -> RedisOperation:
-        """Convert Project operation"""
-        redis_commands = []
-        
-        for expr, alias in project.projections:
-            if hasattr(expr, 'property_name'):  # PropertyExpression
-                redis_commands.append(f"HGET node:{{id}} {expr.property_name}")
-            elif hasattr(expr, 'name'):  # VariableExpression
-                redis_commands.append(f"# Return variable: {expr.name}")
-        
-        if not redis_commands:
-            redis_commands.append("# Project selected columns")
-        
-        redis_op = RedisOperation("Project", redis_commands)
-        
-        for child in project.children:
-            redis_op.children.append(self._convert_operator(child))
-        
-        return redis_op
-    
-    def _convert_order_by(self, order_by: OrderBy) -> RedisOperation:
-        """Convert OrderBy operation"""
-        redis_commands = ["# Sort results"]
-        for expr, ascending in order_by.sort_items:
-            direction = "ASC" if ascending else "DESC"
-            if hasattr(expr, 'variable') and hasattr(expr, 'property_name'):
-                redis_commands.append(f"SORT BY {expr.variable}.{expr.property_name} {direction}")
-        
-        redis_op = RedisOperation("OrderBy", redis_commands)
-        
-        for child in order_by.children:
-            redis_op.children.append(self._convert_operator(child))
-        
-        return redis_op
-    
-    def _convert_limit(self, limit: Limit) -> RedisOperation:
-        """Convert Limit operation"""
-        redis_commands = []
-        if limit.skip > 0:
-            redis_commands.append(f"SKIP {limit.skip}")
-        if limit.count != float("inf"):
-            redis_commands.append(f"LIMIT {limit.count}")
-        
-        if not redis_commands:
-            redis_commands.append("# No limit applied")
-        
-        redis_op = RedisOperation("Limit", redis_commands)
-        
-        for child in limit.children:
-            redis_op.children.append(self._convert_operator(child))
-        
-        return redis_op
-    
     def _convert_join(self, join: Join) -> PhysicalOperation:
         """Convert Join operation"""
-        physical_op = PhysicalOperation("Join", "mixed")
+        physical_op = PhysicalOperation("Join", "mixed", join)
         
-        for child in join.children:
-            physical_op.children.append(self._convert_operator(child))
+        # CRITICAL: Preserve logical operation reference
+        physical_op.logical_op = join
         
         return physical_op
     
@@ -492,10 +502,23 @@ class PhysicalPlanner:
         physical_op = PhysicalOperation(type(op).__name__, "mixed", op)
         physical_op.estimated_cardinality = 1000
         
-        for child in op.children:
-            physical_op.children.append(self._convert_operator(child))
+        # CRITICAL: Preserve logical operation reference
+        physical_op.logical_op = op
         
         return physical_op
+    
+    def _format_range(self, operator: str, value: Any) -> str:
+        """Format range for Redis ZRANGEBYSCORE"""
+        if operator == '>':
+            return f"({value} +inf"
+        elif operator == '>=':
+            return f"{value} +inf"
+        elif operator == '<':
+            return f"-inf ({value})"
+        elif operator == '<=':
+            return f"-inf {value}"
+        return f"{value} {value}"
+
 
 # Enhanced printing function
 def print_physical_plan(physical_op: PhysicalOperation, indent: int = 0) -> None:

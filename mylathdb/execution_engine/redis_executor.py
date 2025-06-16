@@ -419,7 +419,7 @@ class RedisExecutor:
         return projected_results
     
     def _evaluate_projection_expression(self, expr, result):
-        """FIXED: Evaluate projection expression with correct property access"""
+        """FINAL FIX: Evaluate projection expression with comprehensive property access"""
         
         from ..cypher_planner.ast_nodes import (
             PropertyExpression, VariableExpression, LiteralExpression,
@@ -427,17 +427,32 @@ class RedisExecutor:
         )
         
         if isinstance(expr, PropertyExpression):
-            # Property access: variable.property
+            # Property access: variable.property -> extract specific property value
             entity = result.get(expr.variable)
+            
             if entity and isinstance(entity, dict):
-                # THE FIX: Check properties sub-dict first (this is where the data is!)
-                if 'properties' in entity and isinstance(entity['properties'], dict):
-                    if expr.property_name in entity['properties']:
-                        return entity['properties'][expr.property_name]
+                # Try multiple property access patterns in order of preference
                 
-                # Fallback: direct property access
+                # Pattern 1: Direct property access (entity['name'])
                 if expr.property_name in entity:
-                    return entity[expr.property_name]
+                    value = entity[expr.property_name]
+                    return value
+                
+                # Pattern 2: Properties stored in 'properties' sub-dict
+                elif 'properties' in entity and isinstance(entity['properties'], dict):
+                    if expr.property_name in entity['properties']:
+                        value = entity['properties'][expr.property_name]
+                        return value
+                
+                # Pattern 3: Look for the property in any sub-dictionary
+                for key, sub_value in entity.items():
+                    if isinstance(sub_value, dict) and expr.property_name in sub_value:
+                        return sub_value[expr.property_name]
+                
+                # Pattern 4: Case-insensitive search (fallback)
+                for key, value in entity.items():
+                    if isinstance(key, str) and key.lower() == expr.property_name.lower():
+                        return value
             
             return None
             
@@ -451,9 +466,7 @@ class RedisExecutor:
             
         else:
             # Unknown expression type
-            logger.warning(f"Unknown expression type: {type(expr)}")
-            return str(expr)
-            
+            return str(expr)            
     def _apply_return_items_to_results(self, results, return_items):
         """Apply return items (ReturnItem objects) to result set"""
         
