@@ -210,7 +210,7 @@ class RedisExecutor:
         
         logger.debug(f"Executing Redis operation: {redis_operation.operation_type}")
         
-        # FIXED: Route to appropriate handler based on operation type
+        # Route to appropriate handler based on operation type
         operation_type = redis_operation.operation_type
         logical_op = getattr(redis_operation, 'logical_op', None)
         
@@ -225,97 +225,179 @@ class RedisExecutor:
         elif operation_type == "PropertyFilter" and logical_op:
             return self._execute_property_filter_fixed(logical_op, context)
         elif operation_type == "Project":
-            return self._execute_project_fixed(redis_operation, context)
+            return self._execute_project_operation_final(redis_operation, context)
         elif operation_type == "OrderBy":
-            return self._execute_order_by_fixed(redis_operation, context)
+            return self._execute_order_by_operation_final(redis_operation, context)
         elif operation_type == "Limit":
-            return self._execute_limit_fixed(redis_operation, context)
+            return self._execute_limit_operation_final(redis_operation, context)
         else:
             # Execute Redis commands directly
             return self._execute_redis_commands_fixed(redis_operation, context)
-
-    def _apply_return_items_to_results(self, results, return_items):
-        """Apply return items (ReturnItem objects) to result set"""
-        
-        logger.debug(f"Applying {len(return_items)} return items to {len(results)} results")
-        
-        projected_results = []
-        
-        for result in results:
-            projected_record = {}
-            
-            for return_item in return_items:
-                try:
-                    expr = return_item.expression
-                    alias = return_item.alias
-                    
-                    logger.debug(f"Processing return item: {type(expr).__name__}")
-                    
-                    # Evaluate the expression
-                    value = self._evaluate_projection_expression(expr, result)
-                    
-                    # Use alias if provided, otherwise derive name from expression
-                    key = alias if alias else self._derive_expression_name(expr)
-                    projected_record[key] = value
-                    
-                    logger.debug(f"Added projection: '{key}' = {value}")
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to evaluate return item {return_item}: {e}")
-                    key = alias if alias else str(return_item)
-                    projected_record[key] = None
-            
-            projected_results.append(projected_record)
-        
-        logger.debug(f"Projection complete: {len(projected_results)} results")
-        return projected_results
     
-
-
-    def _execute_project_fixed(self, operation, context) -> List[Dict[str, Any]]:
-        """FIXED: Execute Project operation with corrected logical_op access"""
+    def _execute_project_operation_final(self, operation, context) -> List[Dict[str, Any]]:
+        """FINAL FIX: Execute Project operation without result corruption"""
         
-        print("🔍 === PROJECT OPERATION DEBUG ===")
+        print("🔍 === FINAL PROJECT OPERATION ===")
         
-        # STEP 1: Execute child operations first
+        # STEP 1: Execute child operations to get base data
         base_results = []
         for child in operation.children:
             child_results = self._execute_child_operation(child, context)
             base_results.extend(child_results)
         
-        print(f"Base results: {len(base_results)}")
+        print(f"📊 Base results: {len(base_results)}")
         if base_results:
-            print(f"Sample: {base_results[0]}")
+            print(f"📋 Sample base result: {base_results[0]}")
         
-        # STEP 3: FIXED - Check for projections more carefully
-        if hasattr(operation, 'logical_op'):
-            logical_op = operation.logical_op
-            print(f"logical_op: {logical_op}")
-            print(f"logical_op type: {type(logical_op) if logical_op else 'None'}")
+        # STEP 2: Get projections from logical operation
+        logical_op = getattr(operation, 'logical_op', None)
+        if not logical_op:
+            print("⚠️  No logical operation found, returning base results")
+            return base_results
+        
+        print(f"🎯 Logical operation: {type(logical_op).__name__}")
+        
+        # STEP 3: Apply projections
+        if hasattr(logical_op, 'projections') and logical_op.projections:
+            print(f"✅ Found {len(logical_op.projections)} projections")
             
-            # FIXED: Check logical_op is not None explicitly
-            if logical_op is not None:
-                print(f"✅ Logical op exists: {type(logical_op).__name__}")
+            projected_results = []
+            for result in base_results:
+                projected_record = {}
                 
-                if hasattr(logical_op, 'projections'):
-                    projections = logical_op.projections
-                    print(f"Projections: {projections}")
-                    
-                    if projections:
-                        print("✅ APPLYING PROJECTIONS!")
-                        projected_results = self._apply_projections_to_results(base_results, projections)
-                        print(f"Result: {projected_results[0] if projected_results else 'None'}")
-                        return projected_results
-            else:
-                print("❌ logical_op is None")
+                for expr, alias in logical_op.projections:
+                    try:
+                        # Evaluate expression
+                        value = self._evaluate_expression_safely(expr, result)
+                        
+                        # Determine output key
+                        key = alias if alias else self._derive_expression_name(expr)
+                        projected_record[key] = value
+                        
+                        print(f"✅ Projection: {key} = {value}")
+                        
+                    except Exception as e:
+                        print(f"❌ Projection failed for {expr}: {e}")
+                        key = alias if alias else str(expr)
+                        projected_record[key] = None
+                
+                projected_results.append(projected_record)
+            
+            print(f"🎉 Final projected results: {projected_results}")
+            return projected_results
         
-        print("Returning base results (no projections)")
+        else:
+            print("⚠️  No projections found, returning base results")
+            return base_results
+    
+    def _evaluate_expression_safely(self, expr, result):
+        """SAFE: Evaluate projection expression with comprehensive error handling"""
+        
+        from ..cypher_planner.ast_nodes import (
+            PropertyExpression, VariableExpression, LiteralExpression,
+            BinaryExpression, FunctionCall
+        )
+        
+        print(f"🔍 Evaluating: {expr} (type: {type(expr).__name__})")
+        
+        try:
+            if isinstance(expr, PropertyExpression):
+                # Property access: variable.property
+                entity = result.get(expr.variable)
+                print(f"📦 Entity for '{expr.variable}': {entity}")
+                
+                if entity and isinstance(entity, dict):
+                    # Try multiple access patterns
+                    
+                    # Direct property access
+                    if expr.property_name in entity:
+                        value = entity[expr.property_name]
+                        print(f"✅ Direct property access: {expr.property_name} = {value}")
+                        return value
+                    
+                    # Properties sub-dict
+                    elif 'properties' in entity and isinstance(entity['properties'], dict):
+                        if expr.property_name in entity['properties']:
+                            value = entity['properties'][expr.property_name]
+                            print(f"✅ Properties dict access: {expr.property_name} = {value}")
+                            return value
+                    
+                    # Search all keys
+                    for key, value in entity.items():
+                        if key.lower() == expr.property_name.lower():
+                            print(f"✅ Case-insensitive match: {key} = {value}")
+                            return value
+                
+                print(f"❌ Property '{expr.property_name}' not found")
+                return None
+                
+            elif isinstance(expr, VariableExpression):
+                # Variable reference
+                value = result.get(expr.name)
+                print(f"✅ Variable '{expr.name}' = {value}")
+                return value
+                
+            elif isinstance(expr, LiteralExpression):
+                # Literal value
+                print(f"✅ Literal: {expr.value}")
+                return expr.value
+                
+            else:
+                print(f"⚠️  Unknown expression type: {type(expr)}")
+                return str(expr)
+                
+        except Exception as e:
+            print(f"❌ Expression evaluation failed: {e}")
+            return None
+    
+    def _derive_expression_name(self, expr):
+        """Derive a name from an expression for use as a column name"""
+        
+        from ..cypher_planner.ast_nodes import (
+            PropertyExpression, VariableExpression, LiteralExpression
+        )
+        
+        if isinstance(expr, PropertyExpression):
+            return f"{expr.variable}.{expr.property_name}"
+        elif isinstance(expr, VariableExpression):
+            return expr.name
+        elif isinstance(expr, LiteralExpression):
+            return str(expr.value)
+        else:
+            return str(expr)
+    
+    def _execute_order_by_operation_final(self, operation, context) -> List[Dict[str, Any]]:
+        """FINAL: Execute OrderBy operation"""
+        
+        # Execute children first
+        base_results = []
+        for child in operation.children:
+            child_results = self._execute_child_operation(child, context)
+            base_results.extend(child_results)
+        
+        # Apply ordering if we have results and ordering info
+        logical_op = getattr(operation, 'logical_op', None)
+        if base_results and logical_op and hasattr(logical_op, 'sort_items'):
+            try:
+                # Simple sorting by first sort item
+                sort_expr, ascending = logical_op.sort_items[0]
+                
+                def sort_key_func(result):
+                    try:
+                        return self._evaluate_expression_safely(sort_expr, result) or ""
+                    except:
+                        return ""
+                
+                base_results = sorted(base_results, key=sort_key_func, reverse=not ascending)
+                print(f"✅ Applied ordering: {len(base_results)} results sorted")
+                
+            except Exception as e:
+                print(f"⚠️  Ordering failed: {e}")
+        
         return base_results
     
-    def _execute_limit_fixed(self, operation, context) -> List[Dict[str, Any]]:
-        """FIXED: Execute Limit operation"""
-        
-        logger.debug("Executing Limit operation with children")
+    def _execute_limit_operation_final(self, operation, context) -> List[Dict[str, Any]]:
+        """FINAL: Execute Limit operation"""
         
         # Execute children first
         base_results = []
@@ -324,18 +406,17 @@ class RedisExecutor:
             base_results.extend(child_results)
         
         # Apply limit if we have results and limit info
-        if base_results and hasattr(operation, 'logical_op'):
-            logical_op = operation.logical_op
-            if logical_op:
-                skip = getattr(logical_op, 'skip', 0)
-                limit = getattr(logical_op, 'count', None)
-                
-                if skip > 0:
-                    base_results = base_results[skip:]
-                if limit is not None and limit < len(base_results):
-                    base_results = base_results[:limit]
-                
-                logger.debug(f"Applied limit (skip={skip}, limit={limit}): {len(base_results)} results")
+        logical_op = getattr(operation, 'logical_op', None)
+        if base_results and logical_op:
+            skip = getattr(logical_op, 'skip', 0)
+            limit = getattr(logical_op, 'count', None)
+            
+            if skip > 0:
+                base_results = base_results[skip:]
+            if limit is not None and limit < len(base_results):
+                base_results = base_results[:limit]
+            
+            print(f"✅ Applied limit (skip={skip}, limit={limit}): {len(base_results)} results")
         
         return base_results
     
@@ -360,11 +441,11 @@ class RedisExecutor:
             elif op_type == "PropertyFilter" and logical_op:
                 return self._execute_property_filter_fixed(logical_op, context)
             elif op_type == "Project":
-                return self._execute_project_fixed(child_operation, context)
+                return self._execute_project_operation_final(child_operation, context)
             elif op_type == "OrderBy":
-                return self._execute_order_by_fixed(child_operation, context)
+                return self._execute_order_by_operation_final(child_operation, context)
             elif op_type == "Limit":
-                return self._execute_limit_fixed(child_operation, context)
+                return self._execute_limit_operation_final(child_operation, context)
             else:
                 # Execute Redis commands directly
                 return self._execute_redis_commands_fixed(child_operation, context)
@@ -390,150 +471,6 @@ class RedisExecutor:
         else:
             logger.warning(f"Unknown logical operation: {op_type}")
             return []
-    
-    def _apply_projections_to_results(self, results, projections):
-        """Apply projections to result set"""
-        
-        projected_results = []
-        
-        for result in results:
-            projected_record = {}
-            
-            for expr, alias in projections:
-                try:
-                    # Evaluate projection expression
-                    value = self._evaluate_projection_expression(expr, result)
-                    
-                    # Use alias if provided, otherwise derive name from expression
-                    key = alias if alias else self._derive_expression_name(expr)
-                    projected_record[key] = value
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to evaluate projection {expr}: {e}")
-                    # Use null value for failed projections
-                    key = alias if alias else str(expr)
-                    projected_record[key] = None
-            
-            projected_results.append(projected_record)
-        
-        return projected_results
-    
-    def _evaluate_projection_expression(self, expr, result):
-        """FINAL FIX: Evaluate projection expression with comprehensive property access"""
-        
-        from ..cypher_planner.ast_nodes import (
-            PropertyExpression, VariableExpression, LiteralExpression,
-            BinaryExpression, FunctionCall
-        )
-        
-        if isinstance(expr, PropertyExpression):
-            # Property access: variable.property -> extract specific property value
-            entity = result.get(expr.variable)
-            
-            if entity and isinstance(entity, dict):
-                # Try multiple property access patterns in order of preference
-                
-                # Pattern 1: Direct property access (entity['name'])
-                if expr.property_name in entity:
-                    value = entity[expr.property_name]
-                    return value
-                
-                # Pattern 2: Properties stored in 'properties' sub-dict
-                elif 'properties' in entity and isinstance(entity['properties'], dict):
-                    if expr.property_name in entity['properties']:
-                        value = entity['properties'][expr.property_name]
-                        return value
-                
-                # Pattern 3: Look for the property in any sub-dictionary
-                for key, sub_value in entity.items():
-                    if isinstance(sub_value, dict) and expr.property_name in sub_value:
-                        return sub_value[expr.property_name]
-                
-                # Pattern 4: Case-insensitive search (fallback)
-                for key, value in entity.items():
-                    if isinstance(key, str) and key.lower() == expr.property_name.lower():
-                        return value
-            
-            return None
-            
-        elif isinstance(expr, VariableExpression):
-            # Simple variable reference
-            return result.get(expr.name)
-            
-        elif isinstance(expr, LiteralExpression):
-            # Literal value
-            return expr.value
-            
-        else:
-            # Unknown expression type
-            return str(expr)            
-    def _apply_return_items_to_results(self, results, return_items):
-        """Apply return items (ReturnItem objects) to result set"""
-        
-        projected_results = []
-        
-        for result in results:
-            projected_record = {}
-            
-            for return_item in return_items:
-                try:
-                    expr = return_item.expression
-                    alias = return_item.alias
-                    
-                    # Evaluate the expression
-                    value = self._evaluate_projection_expression(expr, result)
-                    
-                    # Use alias if provided, otherwise derive name from expression  
-                    key = alias if alias else self._derive_expression_name(expr)
-                    projected_record[key] = value
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to evaluate return item: {e}")
-                    key = alias if alias else str(return_item)
-                    projected_record[key] = None
-            
-            projected_results.append(projected_record)
-        
-        return projected_results
-    
-    def _derive_expression_name(self, expr):
-        """Derive a name from an expression for use as a column name"""
-        
-        from ..cypher_planner.ast_nodes import (
-            PropertyExpression, VariableExpression, LiteralExpression
-        )
-        
-        if isinstance(expr, PropertyExpression):
-            return f"{expr.variable}.{expr.property_name}"
-        elif isinstance(expr, VariableExpression):
-            return expr.name
-        elif isinstance(expr, LiteralExpression):
-            return str(expr.value)
-        else:
-            return str(expr)
-    
-    def _apply_ordering_to_results(self, results, sort_items):
-        """Apply ordering to results"""
-        
-        if not sort_items:
-            return results
-        
-        try:
-            # For now, implement simple sorting by first sort item
-            sort_expr, ascending = sort_items[0]
-            
-            def sort_key_func(result):
-                try:
-                    value = self._evaluate_projection_expression(sort_expr, result)
-                    return value if value is not None else ""
-                except:
-                    return ""
-            
-            return sorted(results, key=sort_key_func, reverse=not ascending)
-            
-        except Exception as e:
-            logger.warning(f"Failed to apply ordering: {e}")
-            return results
     
     def _execute_node_by_label_scan_fixed(self, logical_op, context) -> List[Dict[str, Any]]:
         """FIXED: Execute NodeByLabelScan using Redis label indexes"""
@@ -1109,3 +1046,157 @@ class RedisExecutor:
             logger.error(f"Error during Redis shutdown: {e}")
         
         logger.info("Redis executor shutdown complete")
+    
+    # DEBUG METHODS
+    
+    def debug_redis_state(self):
+        """Debug method to check Redis state and data loading"""
+        if not self.redis:
+            print("❌ Redis not available")
+            return
+        
+        print("🔍 Redis State Debug:")
+        
+        # Check all keys
+        all_keys = list(self.redis.scan_iter())
+        print(f"📋 All Redis keys ({len(all_keys)}): {all_keys}")
+        
+        # Check node data
+        node_count = 0
+        for key in all_keys:
+            if key.startswith('node:') and key != 'next_node_id':
+                node_count += 1
+                node_id = key.split(':')[1]
+                node_data = self.redis.hgetall(key)
+                print(f"📝 {key}: {node_data}")
+                
+                # Check labels for this node
+                labels_key = f"node_labels:{node_id}"
+                labels = list(self.redis.smembers(labels_key))
+                print(f"🏷️  {labels_key}: {labels}")
+        
+        print(f"📊 Total nodes found: {node_count}")
+        
+        # Check label indexes
+        label_indexes = [key for key in all_keys if key.startswith('label:')]
+        print(f"🏷️  Label indexes ({len(label_indexes)}):")
+        for key in label_indexes:
+            label_name = key.split(':')[1]
+            node_ids = list(self.redis.smembers(key))
+            print(f"   {key}: {node_ids}")
+        
+        # Check property indexes
+        prop_indexes = [key for key in all_keys if key.startswith('prop:')]
+        print(f"🔧 Property indexes ({len(prop_indexes)}):")
+        for key in prop_indexes[:5]:  # Show first 5
+            node_ids = list(self.redis.smembers(key))
+            print(f"   {key}: {node_ids}")
+        if len(prop_indexes) > 5:
+            print(f"   ... and {len(prop_indexes) - 5} more property indexes")
+    
+    def debug_query_execution(self, query: str):
+        """Debug method to trace query execution step by step"""
+        print(f"🔍 Debugging Query: {query}")
+        
+        try:
+            from ..cypher_planner import parse_cypher_query, LogicalPlanner, PhysicalPlanner
+            
+            # Step 1: Parse AST
+            ast = parse_cypher_query(query)
+            print(f"✅ AST: {type(ast).__name__}")
+            
+            if ast.return_clause:
+                print(f"   Return items: {len(ast.return_clause.items)}")
+                for i, item in enumerate(ast.return_clause.items):
+                    print(f"     {i}: {item.expression} (alias: {item.alias})")
+            
+            # Step 2: Create logical plan
+            logical_planner = LogicalPlanner()
+            logical_plan = logical_planner.create_logical_plan(ast)
+            print(f"✅ Logical Plan: {type(logical_plan).__name__}")
+            
+            if hasattr(logical_plan, 'projections'):
+                print(f"   Projections: {logical_plan.projections}")
+            if hasattr(logical_plan, 'logical_op'):
+                print(f"   Has logical_op: {logical_plan.logical_op is not None}")
+            
+            # Step 3: Create physical plan
+            physical_planner = PhysicalPlanner()
+            physical_plan = physical_planner.create_physical_plan(logical_plan)
+            print(f"✅ Physical Plan: {type(physical_plan).__name__}")
+            
+            if hasattr(physical_plan, 'logical_op'):
+                logical_op = physical_plan.logical_op
+                print(f"   Physical logical_op: {logical_op is not None}")
+                if logical_op and hasattr(logical_op, 'projections'):
+                    print(f"   Physical projections: {logical_op.projections}")
+            
+            # Step 4: Execute with context
+            from ..execution_engine.engine import ExecutionContext
+            context = ExecutionContext()
+            result_data = self.execute_operation(physical_plan, context)
+            print(f"✅ Execution: {len(result_data)} results")
+            if result_data:
+                print(f"   Sample: {result_data[0]}")
+            
+            return result_data
+            
+        except Exception as e:
+            print(f"❌ Debug failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def test_projection_fix(self):
+        """Test if the projection fix is working"""
+        print("🧪 Testing Projection Fix...")
+        
+        # Clear and load minimal test data
+        if self.redis:
+            self.redis.flushdb()
+        
+        self.load_nodes([{
+            'id': '1', 
+            'name': 'Alice', 
+            'age': 30, 
+            '_labels': ['Person']
+        }])
+        
+        # Test projection execution directly
+        try:
+            from ..cypher_planner import parse_cypher_query, LogicalPlanner, PhysicalPlanner
+            from ..execution_engine.engine import ExecutionContext
+            
+            # Parse and plan
+            ast = parse_cypher_query("MATCH (n:Person) RETURN n.name")
+            logical_planner = LogicalPlanner()
+            logical_plan = logical_planner.create_logical_plan(ast)
+            physical_planner = PhysicalPlanner()
+            physical_plan = physical_planner.create_physical_plan(logical_plan)
+            
+            # Execute
+            context = ExecutionContext()
+            result = self.execute_operation(physical_plan, context)
+            
+            print(f"Success: {len(result)} results")
+            if result:
+                first_result = result[0]
+                print(f"Result: {first_result}")
+                print(f"Result keys: {list(first_result.keys())}")
+                
+                # Check if projection worked
+                if 'n.name' in first_result and first_result['n.name'] == 'Alice':
+                    print("✅ PROJECTION SUCCESSFUL!")
+                    return True
+                else:
+                    print("❌ PROJECTION FAILED")
+                    return False
+            else:
+                print("❌ No results returned")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Test failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False

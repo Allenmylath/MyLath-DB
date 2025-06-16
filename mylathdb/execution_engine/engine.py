@@ -1,7 +1,7 @@
 # mylathdb/execution_engine/engine.py
 
 """
-MyLathDB Core Execution Engine
+MyLathDB Core Execution Engine - FIXED VERSION
 Main execution engine that coordinates Redis + GraphBLAS execution
 """
 
@@ -60,7 +60,7 @@ class ExecutionResult:
 
 class ExecutionEngine:
     """
-    Main MyLathDB Execution Engine
+    Main MyLathDB Execution Engine - FIXED VERSION
     
     Coordinates execution between Redis (entities/properties) and 
     GraphBLAS (graph traversals) based on FalkorDB architecture.
@@ -81,6 +81,9 @@ class ExecutionEngine:
         self.coordinator = ExecutionCoordinator(self.config)
         self.data_bridge = DataBridge(self.redis_executor, self.graphblas_executor)
         self.result_formatter = ResultFormatter()
+        
+        # Set executor references for coordinator
+        self.coordinator.set_executors(self.redis_executor, self.graphblas_executor)
         
         # Execution statistics
         self.total_queries_executed = 0
@@ -132,7 +135,7 @@ class ExecutionEngine:
     def execute(self, physical_plan, parameters: Dict[str, Any] = None,
                 graph_data: Dict[str, Any] = None, **kwargs) -> ExecutionResult:
         """
-        Execute a physical plan
+        Execute a physical plan - FIXED VERSION
         
         Args:
             physical_plan: Physical execution plan from PhysicalPlanner
@@ -176,11 +179,17 @@ class ExecutionEngine:
             if graph_data:
                 self._load_graph_data(graph_data)
             
-            # Execute the physical plan
-            result_data = self._execute_physical_plan(physical_plan, context, execution_result)
+            # FIXED: Execute the physical plan with proper error handling
+            result_data = self._execute_physical_plan_fixed(physical_plan, context, execution_result)
             
-            # Format results
-            formatted_data = self.result_formatter.format_results(result_data, physical_plan)
+            # FIXED: Don't apply result formatting if results are already projected
+            # Check if results already have projection-style keys (like 'n.name')
+            if result_data and any('.' in key for key in result_data[0].keys() if isinstance(key, str)):
+                logger.debug("Results already projected, skipping formatter")
+                formatted_data = result_data
+            else:
+                # Format results
+                formatted_data = self.result_formatter.format_results(result_data, physical_plan)
             
             # Build successful result
             execution_result.success = True
@@ -190,6 +199,7 @@ class ExecutionEngine:
             
             # Cache result if enabled
             if context.cache_results and self.cache:
+                cache_key = self._generate_cache_key(physical_plan, parameters)
                 self.cache[cache_key] = execution_result
             
             # Update statistics
@@ -210,10 +220,10 @@ class ExecutionEngine:
         
         return execution_result
     
-    def _execute_physical_plan(self, physical_plan, context: ExecutionContext, 
-                              execution_result: ExecutionResult) -> List[Dict[str, Any]]:
+    def _execute_physical_plan_fixed(self, physical_plan, context: ExecutionContext, 
+                                    execution_result: ExecutionResult) -> List[Dict[str, Any]]:
         """
-        Execute the physical plan using appropriate executors
+        FIXED: Execute the physical plan using appropriate executors
         
         Based on FalkorDB's execution model with Redis + GraphBLAS coordination
         """
@@ -221,39 +231,55 @@ class ExecutionEngine:
             RedisOperation, GraphBLASOperation, CoordinatorOperation, PhysicalOperation
         )
         
+        print(f"🔧 [FIXED] Executing physical plan: {type(physical_plan).__name__}")
+        
         # Route to appropriate executor based on operation type
         if isinstance(physical_plan, RedisOperation):
-            execution_result.redis_operations += 1
-            return self.redis_executor.execute_operation(physical_plan, context)
+            if execution_result:  # FIXED: Check if execution_result is not None
+                execution_result.redis_operations += 1
+            result = self.redis_executor.execute_operation(physical_plan, context)
+            print(f"🔧 [FIXED] Redis result: {result}")
+            return result
             
         elif isinstance(physical_plan, GraphBLASOperation):
-            execution_result.graphblas_operations += 1
-            return self.graphblas_executor.execute_operation(physical_plan, context)
+            if execution_result:  # FIXED: Check if execution_result is not None
+                execution_result.graphblas_operations += 1
+            result = self.graphblas_executor.execute_operation(physical_plan, context)
+            print(f"🔧 [FIXED] GraphBLAS result: {result}")
+            return result
             
         elif isinstance(physical_plan, CoordinatorOperation):
-            execution_result.coordinator_operations += 1
-            return self.coordinator.execute_operation(physical_plan, context)
+            if execution_result:  # FIXED: Check if execution_result is not None
+                execution_result.coordinator_operations += 1
+            result = self.coordinator.execute_operation(physical_plan, context)
+            print(f"🔧 [FIXED] Coordinator result: {result}")
+            return result
             
         else:
             # Generic physical operation - determine best executor
-            return self._execute_generic_operation(physical_plan, context, execution_result)
+            result = self._execute_generic_operation_fixed(physical_plan, context, execution_result)
+            print(f"🔧 [FIXED] Generic result: {result}")
+            return result
     
-    def _execute_generic_operation(self, physical_plan, context: ExecutionContext,
-                                  execution_result: ExecutionResult) -> List[Dict[str, Any]]:
-        """Execute generic physical operation by routing to appropriate executor"""
+    def _execute_generic_operation_fixed(self, physical_plan, context: ExecutionContext,
+                                        execution_result: ExecutionResult) -> List[Dict[str, Any]]:
+        """FIXED: Execute generic physical operation by routing to appropriate executor"""
         
         # Check execution target hint
         target = getattr(physical_plan, 'target', 'mixed')
         
         if target == 'redis':
-            execution_result.redis_operations += 1
+            if execution_result:  # FIXED: Check if execution_result is not None
+                execution_result.redis_operations += 1
             return self.redis_executor.execute_generic_operation(physical_plan, context)
         elif target == 'graphblas':
-            execution_result.graphblas_operations += 1
+            if execution_result:  # FIXED: Check if execution_result is not None
+                execution_result.graphblas_operations += 1
             return self.graphblas_executor.execute_generic_operation(physical_plan, context)
         else:
             # Mixed operation - use coordinator
-            execution_result.coordinator_operations += 1
+            if execution_result:  # FIXED: Check if execution_result is not None
+                execution_result.coordinator_operations += 1
             return self.coordinator.execute_generic_operation(physical_plan, context)
     
     def _load_graph_data(self, graph_data: Dict[str, Any]):
