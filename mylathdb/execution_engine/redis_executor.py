@@ -1,7 +1,7 @@
 # mylathdb/execution_engine/redis_executor.py
 
 """
-MyLathDB Redis Executor - FIXED VERSION
+MyLathDB Redis Executor - COMPLETE FIXED VERSION
 Handles Redis operations for node/edge storage and property access
 Based on FalkorDB's Redis integration patterns
 """
@@ -194,7 +194,7 @@ class RedisExecutor:
     @mylathdb_measure_time
     def execute_operation(self, redis_operation, context) -> List[Dict[str, Any]]:
         """
-        Execute Redis operation from physical plan - FIXED VERSION
+        Execute Redis operation from physical plan - COMPLETE FIXED VERSION
         
         Args:
             redis_operation: RedisOperation from physical planner
@@ -233,6 +233,294 @@ class RedisExecutor:
         else:
             # Execute Redis commands directly
             return self._execute_redis_commands_fixed(redis_operation, context)
+
+    def _apply_return_items_to_results(self, results, return_items):
+        """Apply return items (ReturnItem objects) to result set"""
+        
+        logger.debug(f"Applying {len(return_items)} return items to {len(results)} results")
+        
+        projected_results = []
+        
+        for result in results:
+            projected_record = {}
+            
+            for return_item in return_items:
+                try:
+                    expr = return_item.expression
+                    alias = return_item.alias
+                    
+                    logger.debug(f"Processing return item: {type(expr).__name__}")
+                    
+                    # Evaluate the expression
+                    value = self._evaluate_projection_expression(expr, result)
+                    
+                    # Use alias if provided, otherwise derive name from expression
+                    key = alias if alias else self._derive_expression_name(expr)
+                    projected_record[key] = value
+                    
+                    logger.debug(f"Added projection: '{key}' = {value}")
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to evaluate return item {return_item}: {e}")
+                    key = alias if alias else str(return_item)
+                    projected_record[key] = None
+            
+            projected_results.append(projected_record)
+        
+        logger.debug(f"Projection complete: {len(projected_results)} results")
+        return projected_results
+    
+
+
+    def _execute_project_fixed(self, operation, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute Project operation with corrected logical_op access"""
+        
+        print("🔍 === PROJECT OPERATION DEBUG ===")
+        
+        # STEP 1: Execute child operations first
+        base_results = []
+        for child in operation.children:
+            child_results = self._execute_child_operation(child, context)
+            base_results.extend(child_results)
+        
+        print(f"Base results: {len(base_results)}")
+        if base_results:
+            print(f"Sample: {base_results[0]}")
+        
+        # STEP 3: FIXED - Check for projections more carefully
+        if hasattr(operation, 'logical_op'):
+            logical_op = operation.logical_op
+            print(f"logical_op: {logical_op}")
+            print(f"logical_op type: {type(logical_op) if logical_op else 'None'}")
+            
+            # FIXED: Check logical_op is not None explicitly
+            if logical_op is not None:
+                print(f"✅ Logical op exists: {type(logical_op).__name__}")
+                
+                if hasattr(logical_op, 'projections'):
+                    projections = logical_op.projections
+                    print(f"Projections: {projections}")
+                    
+                    if projections:
+                        print("✅ APPLYING PROJECTIONS!")
+                        projected_results = self._apply_projections_to_results(base_results, projections)
+                        print(f"Result: {projected_results[0] if projected_results else 'None'}")
+                        return projected_results
+            else:
+                print("❌ logical_op is None")
+        
+        print("Returning base results (no projections)")
+        return base_results
+    
+    def _execute_limit_fixed(self, operation, context) -> List[Dict[str, Any]]:
+        """FIXED: Execute Limit operation"""
+        
+        logger.debug("Executing Limit operation with children")
+        
+        # Execute children first
+        base_results = []
+        for child in operation.children:
+            child_results = self._execute_child_operation(child, context)
+            base_results.extend(child_results)
+        
+        # Apply limit if we have results and limit info
+        if base_results and hasattr(operation, 'logical_op'):
+            logical_op = operation.logical_op
+            if logical_op:
+                skip = getattr(logical_op, 'skip', 0)
+                limit = getattr(logical_op, 'count', None)
+                
+                if skip > 0:
+                    base_results = base_results[skip:]
+                if limit is not None and limit < len(base_results):
+                    base_results = base_results[:limit]
+                
+                logger.debug(f"Applied limit (skip={skip}, limit={limit}): {len(base_results)} results")
+        
+        return base_results
+    
+    def _execute_child_operation(self, child_operation, context):
+        """Execute a child operation using appropriate method"""
+        
+        if hasattr(child_operation, 'logical_op') and child_operation.logical_op:
+            return self._execute_logical_operation(child_operation.logical_op, context)
+        elif hasattr(child_operation, 'operation_type'):
+            # Route based on operation type
+            op_type = child_operation.operation_type
+            logical_op = getattr(child_operation, 'logical_op', None)
+            
+            if op_type == "NodeByLabelScan" and logical_op:
+                return self._execute_node_by_label_scan_fixed(logical_op, context)
+            elif op_type == "AllNodeScan" and logical_op:
+                return self._execute_all_node_scan_fixed(logical_op, context)
+            elif op_type == "PropertyScan" and logical_op:
+                return self._execute_property_scan_fixed(logical_op, context)
+            elif op_type == "NodeScan" and logical_op:
+                return self._execute_node_scan_fixed(logical_op, context)
+            elif op_type == "PropertyFilter" and logical_op:
+                return self._execute_property_filter_fixed(logical_op, context)
+            elif op_type == "Project":
+                return self._execute_project_fixed(child_operation, context)
+            elif op_type == "OrderBy":
+                return self._execute_order_by_fixed(child_operation, context)
+            elif op_type == "Limit":
+                return self._execute_limit_fixed(child_operation, context)
+            else:
+                # Execute Redis commands directly
+                return self._execute_redis_commands_fixed(child_operation, context)
+        
+        logger.warning(f"Unknown child operation: {type(child_operation)}")
+        return []
+    
+    def _execute_logical_operation(self, logical_op, context):
+        """Execute logical operation directly"""
+        
+        op_type = type(logical_op).__name__
+        
+        if op_type == "NodeByLabelScan":
+            return self._execute_node_by_label_scan_fixed(logical_op, context)
+        elif op_type == "AllNodeScan":
+            return self._execute_all_node_scan_fixed(logical_op, context)
+        elif op_type == "PropertyScan":
+            return self._execute_property_scan_fixed(logical_op, context)
+        elif op_type == "NodeScan":
+            return self._execute_node_scan_fixed(logical_op, context)
+        elif op_type == "PropertyFilter":
+            return self._execute_property_filter_fixed(logical_op, context)
+        else:
+            logger.warning(f"Unknown logical operation: {op_type}")
+            return []
+    
+    def _apply_projections_to_results(self, results, projections):
+        """Apply projections to result set"""
+        
+        projected_results = []
+        
+        for result in results:
+            projected_record = {}
+            
+            for expr, alias in projections:
+                try:
+                    # Evaluate projection expression
+                    value = self._evaluate_projection_expression(expr, result)
+                    
+                    # Use alias if provided, otherwise derive name from expression
+                    key = alias if alias else self._derive_expression_name(expr)
+                    projected_record[key] = value
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to evaluate projection {expr}: {e}")
+                    # Use null value for failed projections
+                    key = alias if alias else str(expr)
+                    projected_record[key] = None
+            
+            projected_results.append(projected_record)
+        
+        return projected_results
+    
+    def _evaluate_projection_expression(self, expr, result):
+        """FIXED: Evaluate projection expression with correct property access"""
+        
+        from ..cypher_planner.ast_nodes import (
+            PropertyExpression, VariableExpression, LiteralExpression,
+            BinaryExpression, FunctionCall
+        )
+        
+        if isinstance(expr, PropertyExpression):
+            # Property access: variable.property
+            entity = result.get(expr.variable)
+            if entity and isinstance(entity, dict):
+                # THE FIX: Check properties sub-dict first (this is where the data is!)
+                if 'properties' in entity and isinstance(entity['properties'], dict):
+                    if expr.property_name in entity['properties']:
+                        return entity['properties'][expr.property_name]
+                
+                # Fallback: direct property access
+                if expr.property_name in entity:
+                    return entity[expr.property_name]
+            
+            return None
+            
+        elif isinstance(expr, VariableExpression):
+            # Simple variable reference
+            return result.get(expr.name)
+            
+        elif isinstance(expr, LiteralExpression):
+            # Literal value
+            return expr.value
+            
+        else:
+            # Unknown expression type
+            logger.warning(f"Unknown expression type: {type(expr)}")
+            return str(expr)
+            
+    def _apply_return_items_to_results(self, results, return_items):
+        """Apply return items (ReturnItem objects) to result set"""
+        
+        projected_results = []
+        
+        for result in results:
+            projected_record = {}
+            
+            for return_item in return_items:
+                try:
+                    expr = return_item.expression
+                    alias = return_item.alias
+                    
+                    # Evaluate the expression
+                    value = self._evaluate_projection_expression(expr, result)
+                    
+                    # Use alias if provided, otherwise derive name from expression  
+                    key = alias if alias else self._derive_expression_name(expr)
+                    projected_record[key] = value
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to evaluate return item: {e}")
+                    key = alias if alias else str(return_item)
+                    projected_record[key] = None
+            
+            projected_results.append(projected_record)
+        
+        return projected_results
+    
+    def _derive_expression_name(self, expr):
+        """Derive a name from an expression for use as a column name"""
+        
+        from ..cypher_planner.ast_nodes import (
+            PropertyExpression, VariableExpression, LiteralExpression
+        )
+        
+        if isinstance(expr, PropertyExpression):
+            return f"{expr.variable}.{expr.property_name}"
+        elif isinstance(expr, VariableExpression):
+            return expr.name
+        elif isinstance(expr, LiteralExpression):
+            return str(expr.value)
+        else:
+            return str(expr)
+    
+    def _apply_ordering_to_results(self, results, sort_items):
+        """Apply ordering to results"""
+        
+        if not sort_items:
+            return results
+        
+        try:
+            # For now, implement simple sorting by first sort item
+            sort_expr, ascending = sort_items[0]
+            
+            def sort_key_func(result):
+                try:
+                    value = self._evaluate_projection_expression(sort_expr, result)
+                    return value if value is not None else ""
+                except:
+                    return ""
+            
+            return sorted(results, key=sort_key_func, reverse=not ascending)
+            
+        except Exception as e:
+            logger.warning(f"Failed to apply ordering: {e}")
+            return results
     
     def _execute_node_by_label_scan_fixed(self, logical_op, context) -> List[Dict[str, Any]]:
         """FIXED: Execute NodeByLabelScan using Redis label indexes"""
@@ -445,25 +733,6 @@ class RedisExecutor:
                     continue
         
         return matching_node_ids
-    
-    def _execute_project_fixed(self, operation, context) -> List[Dict[str, Any]]:
-        """FIXED: Execute Project operation - extract specific properties"""
-        # Project operations are typically handled by combining with other operations
-        # For now, return empty (would be handled by coordinator)
-        logger.debug("Project operation executed (pass-through)")
-        return []
-    
-    def _execute_order_by_fixed(self, operation, context) -> List[Dict[str, Any]]:
-        """FIXED: Execute OrderBy operation"""
-        # OrderBy is typically applied to previous results by coordinator
-        logger.debug("OrderBy operation executed (pass-through)")
-        return []
-    
-    def _execute_limit_fixed(self, operation, context) -> List[Dict[str, Any]]:
-        """FIXED: Execute Limit operation"""
-        # Limit is typically applied to previous results by coordinator
-        logger.debug("Limit operation executed (pass-through)")
-        return []
     
     def _execute_redis_commands_fixed(self, operation, context) -> List[Dict[str, Any]]:
         """FIXED: Execute raw Redis commands from the operation"""

@@ -1,435 +1,243 @@
-#!/usr/bin/env python3
-"""
-MyLathDB Debug and Fix Script
-Diagnoses data loading and query execution issues
-"""
+# DEBUGGING: Let's trace why projections aren't working
 
-import sys
-from pathlib import Path
+# Step 1: Check if projections are being extracted from physical plan
+# Add this debug method to redis_executor.py
 
-# Add the mylathdb directory to Python path
-current_dir = Path(__file__).parent
-mylathdb_dir = current_dir / "mylathdb"
-sys.path.insert(0, str(mylathdb_dir))
-
-def debug_data_loading():
-    """Debug the data loading process"""
-    print("🔍 Debugging Data Loading Process...")
+def _execute_project_fixed(self, operation, context) -> List[Dict[str, Any]]:
+    """FIXED: Execute Project operation by executing children first - WITH PROJECTION DEBUG"""
     
-    try:
-        from mylathdb import MyLathDB
+    logger.debug("=== PROJECT OPERATION DEBUG ===")
+    logger.debug(f"Operation type: {getattr(operation, 'operation_type', 'unknown')}")
+    logger.debug(f"Has logical_op: {hasattr(operation, 'logical_op')}")
+    
+    if hasattr(operation, 'logical_op') and operation.logical_op:
+        logical_op = operation.logical_op
+        logger.debug(f"Logical op type: {type(logical_op).__name__}")
+        logger.debug(f"Has projections: {hasattr(logical_op, 'projections')}")
         
-        # Create database
-        db = MyLathDB(auto_start_redis=False)
-        print("   ✅ MyLathDB instance created")
+        if hasattr(logical_op, 'projections'):
+            logger.debug(f"Projections: {logical_op.projections}")
         
-        # Test data
-        test_nodes = [
-            {"id": "1", "name": "Alice", "age": 30, "country": "USA", "_labels": ["Person"]},
-            {"id": "2", "name": "Bob", "age": 25, "country": "USA", "_labels": ["Person"]},
-        ]
+        # ALSO CHECK FOR RETURN ITEMS
+        if hasattr(logical_op, 'items'):
+            logger.debug(f"Return items: {logical_op.items}")
+    
+    # STEP 1: Execute child operations first to get base data
+    base_results = []
+    
+    for child in operation.children:
+        logger.debug(f"Executing Project child: {type(child).__name__} - {getattr(child, 'operation_type', 'unknown')}")
+        child_results = self._execute_child_operation(child, context)
+        base_results.extend(child_results)
+        logger.debug(f"Child returned {len(child_results)} results")
+    
+    # STEP 2: If no base results, try to get them from logical operation
+    if not base_results and hasattr(operation, 'logical_op'):
+        logical_op = operation.logical_op
+        if logical_op and hasattr(logical_op, 'children'):
+            for child_logical in logical_op.children:
+                logger.debug(f"Executing Project logical child: {type(child_logical).__name__}")
+                child_results = self._execute_logical_operation(child_logical, context)
+                base_results.extend(child_results)
+                logger.debug(f"Logical child returned {len(child_results)} results")
+    
+    logger.debug(f"Base results before projection: {len(base_results)}")
+    if base_results:
+        logger.debug(f"Sample base result: {base_results[0]}")
+    
+    # STEP 3: FIXED - Apply projections using RETURN ITEMS instead of projections
+    if base_results and hasattr(operation, 'logical_op'):
+        logical_op = operation.logical_op
         
-        test_edges = [
-            ("1", "KNOWS", "2"),
-        ]
+        # CHECK FOR RETURN ITEMS (this is likely where the projection info is)
+        if hasattr(logical_op, 'items') and logical_op.items:
+            logger.debug(f"Found {len(logical_op.items)} return items")
+            projected_results = self._apply_return_items_to_results(base_results, logical_op.items)
+            logger.debug(f"Applied return items: {len(projected_results)} results")
+            if projected_results:
+                logger.debug(f"Sample projected result: {projected_results[0]}")
+            return projected_results
         
-        print(f"   📝 Loading {len(test_nodes)} nodes and {len(test_edges)} edges...")
-        
-        # Load data
-        db.load_graph_data(nodes=test_nodes, edges=test_edges)
-        print("   ✅ Data loading completed")
-        
-        # Check Redis data directly
-        print("\n   🔍 Checking Redis data storage...")
-        
-        if db.engine.redis_executor.redis:
-            redis_client = db.engine.redis_executor.redis
-            
-            # Check if nodes were stored
-            print("   🔍 Checking stored nodes:")
-            node_keys = list(redis_client.scan_iter(match="node:*"))
-            print(f"      Found {len(node_keys)} node keys: {node_keys}")
-            
-            for node_key in node_keys[:3]:  # Check first 3
-                node_data = redis_client.hgetall(node_key)
-                print(f"      {node_key}: {node_data}")
-            
-            # Check label indexes
-            print("   🔍 Checking label indexes:")
-            label_keys = list(redis_client.scan_iter(match="label:*"))
-            print(f"      Found {len(label_keys)} label keys: {label_keys}")
-            
-            for label_key in label_keys:
-                members = redis_client.smembers(label_key)
-                print(f"      {label_key}: {list(members)}")
-            
-            # Check property indexes
-            print("   🔍 Checking property indexes:")
-            prop_keys = list(redis_client.scan_iter(match="prop:*"))
-            print(f"      Found {len(prop_keys)} property keys: {prop_keys[:5]}...")
-            
-            for prop_key in prop_keys[:3]:
-                members = redis_client.smembers(prop_key)
-                print(f"      {prop_key}: {list(members)}")
-        else:
-            print("   ⚠️ Redis not connected - cannot check data storage")
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ Data loading debug failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        # FALLBACK - Check for projections attribute
+        elif hasattr(logical_op, 'projections') and logical_op.projections:
+            logger.debug(f"Found {len(logical_op.projections)} projections")
+            projected_results = self._apply_projections_to_results(base_results, logical_op.projections)
+            logger.debug(f"Applied projections: {len(projected_results)} results")
+            return projected_results
+    
+    # STEP 4: Return base results if no projections
+    logger.debug(f"Project returning {len(base_results)} base results (no projections applied)")
+    return base_results
 
-def debug_simple_query():
-    """Debug a simple query step by step"""
-    print("\n🔍 Debugging Simple Query Execution...")
+# NEW METHOD: Handle return items (this is what we're missing!)
+def _apply_return_items_to_results(self, results, return_items):
+    """Apply return items to result set (this handles RETURN n.name, etc.)"""
+    
+    logger.debug(f"Applying {len(return_items)} return items to {len(results)} results")
+    
+    projected_results = []
+    
+    for result in results:
+        projected_record = {}
+        
+        for return_item in return_items:
+            try:
+                # Extract expression and alias from return item
+                expr = return_item.expression
+                alias = return_item.alias
+                
+                logger.debug(f"Processing return item: {expr} (alias: {alias})")
+                
+                # Evaluate the expression
+                value = self._evaluate_projection_expression(expr, result)
+                
+                # Use alias if provided, otherwise derive name from expression
+                key = alias if alias else self._derive_expression_name(expr)
+                projected_record[key] = value
+                
+                logger.debug(f"Added projection: {key} = {value}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to evaluate return item {return_item}: {e}")
+                # Use null value for failed projections
+                key = alias if alias else str(return_item)
+                projected_record[key] = None
+        
+        projected_results.append(projected_record)
+    
+    return projected_results
+
+# IMPROVED: Better property extraction
+def _evaluate_projection_expression(self, expr, result):
+    """IMPROVED: Evaluate projection expression with better property access"""
+    
+    from ..cypher_planner.ast_nodes import (
+        PropertyExpression, VariableExpression, LiteralExpression,
+        BinaryExpression, FunctionCall
+    )
+    
+    logger.debug(f"Evaluating expression: {expr} (type: {type(expr).__name__})")
+    
+    if isinstance(expr, PropertyExpression):
+        # Property access: variable.property -> extract specific property value
+        logger.debug(f"Property expression: {expr.variable}.{expr.property_name}")
+        
+        entity = result.get(expr.variable)
+        logger.debug(f"Entity for {expr.variable}: {entity}")
+        
+        if entity and isinstance(entity, dict):
+            # Try different property access patterns
+            
+            # Pattern 1: Direct property access (e.g., entity['name'])
+            if expr.property_name in entity:
+                value = entity[expr.property_name]
+                logger.debug(f"Found property directly: {expr.property_name} = {value}")
+                return value
+            
+            # Pattern 2: Properties stored in 'properties' sub-dict
+            elif 'properties' in entity and isinstance(entity['properties'], dict):
+                value = entity['properties'].get(expr.property_name)
+                logger.debug(f"Found property in properties dict: {expr.property_name} = {value}")
+                return value
+            
+            # Pattern 3: Properties stored with _ prefix
+            elif f'_{expr.property_name}' in entity:
+                value = entity[f'_{expr.property_name}']
+                logger.debug(f"Found property with underscore: _{expr.property_name} = {value}")
+                return value
+            
+            # Pattern 4: Case-insensitive search
+            for key, value in entity.items():
+                if key.lower() == expr.property_name.lower():
+                    logger.debug(f"Found property case-insensitive: {key} = {value}")
+                    return value
+        
+        logger.debug(f"Property {expr.property_name} not found in entity")
+        return None
+        
+    elif isinstance(expr, VariableExpression):
+        # Simple variable reference
+        logger.debug(f"Variable expression: {expr.name}")
+        entity = result.get(expr.name)
+        logger.debug(f"Variable value: {entity}")
+        return entity
+        
+    elif isinstance(expr, LiteralExpression):
+        # Literal value
+        logger.debug(f"Literal expression: {expr.value}")
+        return expr.value
+        
+    else:
+        # Unknown expression type
+        logger.debug(f"Unknown expression type: {type(expr)}")
+        return str(expr)
+
+# TESTING FUNCTION
+def debug_projection_issue():
+    """Debug why projections aren't working"""
+    print("🔍 Debugging Projection Issue...")
     
     try:
         from mylathdb import MyLathDB
         from mylathdb.cypher_planner import parse_cypher_query, LogicalPlanner, PhysicalPlanner
         
         # Setup
-        db = MyLathDB(auto_start_redis=False)
+        db = MyLathDB()
+        if hasattr(db.engine.redis_executor, 'redis') and db.engine.redis_executor.redis:
+            db.engine.redis_executor.redis.flushdb()
         
-        # Load test data
-        test_nodes = [
-            {"id": "1", "name": "Alice", "age": 30, "_labels": ["Person"]},
-            {"id": "2", "name": "Bob", "age": 25, "_labels": ["Person"]},
-        ]
-        db.load_graph_data(nodes=test_nodes)
+        # Load data
+        db.load_graph_data(nodes=[{'id': '1', 'name': 'Alice', 'age': 30, '_labels': ['Person']}])
         
-        # Simple query
+        # Parse query manually to check AST
         query = "MATCH (n:Person) RETURN n.name"
-        print(f"   🧪 Testing query: {query}")
+        print(f"Parsing query: {query}")
         
-        # Step 1: Parse query
-        print("   🔧 Step 1: Parsing query...")
-        try:
-            ast = parse_cypher_query(query)
-            print(f"      ✅ AST created: {type(ast).__name__}")
-            print(f"      📋 Match clauses: {len(ast.match_clauses)}")
-            print(f"      📋 Return clause: {ast.return_clause is not None}")
-        except Exception as e:
-            print(f"      ❌ Parsing failed: {e}")
-            return False
+        ast = parse_cypher_query(query)
+        print(f"AST created: {type(ast).__name__}")
         
-        # Step 2: Create logical plan
-        print("   🔧 Step 2: Creating logical plan...")
-        try:
-            logical_planner = LogicalPlanner()
-            logical_plan = logical_planner.create_logical_plan(ast)
-            print(f"      ✅ Logical plan created: {type(logical_plan).__name__}")
-            
-            # Print plan structure
-            def print_plan_debug(op, indent=0):
-                prefix = "  " * indent
-                print(f"      {prefix}- {type(op).__name__}")
-                if hasattr(op, 'variable'):
-                    print(f"      {prefix}  Variable: {op.variable}")
-                if hasattr(op, 'labels'):
-                    print(f"      {prefix}  Labels: {op.labels}")
-                for child in getattr(op, 'children', []):
-                    print_plan_debug(child, indent + 1)
-            
-            print_plan_debug(logical_plan)
-            
-        except Exception as e:
-            print(f"      ❌ Logical planning failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+        if ast.return_clause:
+            print(f"Return clause items: {len(ast.return_clause.items)}")
+            for i, item in enumerate(ast.return_clause.items):
+                print(f"  Item {i}: {item.expression} (alias: {item.alias})")
+                print(f"    Expression type: {type(item.expression).__name__}")
+                if hasattr(item.expression, 'variable'):
+                    print(f"    Variable: {item.expression.variable}")
+                if hasattr(item.expression, 'property_name'):
+                    print(f"    Property: {item.expression.property_name}")
         
-        # Step 3: Create physical plan
-        print("   🔧 Step 3: Creating physical plan...")
-        try:
-            physical_planner = PhysicalPlanner()
-            physical_plan = physical_planner.create_physical_plan(logical_plan)
-            print(f"      ✅ Physical plan created: {type(physical_plan).__name__}")
-            print(f"      📋 Target: {getattr(physical_plan, 'target', 'unknown')}")
-            print(f"      📋 Operation: {getattr(physical_plan, 'operation_type', 'unknown')}")
-        except Exception as e:
-            print(f"      ❌ Physical planning failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+        # Create logical plan
+        logical_planner = LogicalPlanner()
+        logical_plan = logical_planner.create_logical_plan(ast)
+        print(f"Logical plan: {type(logical_plan).__name__}")
         
-        # Step 4: Execute query
-        print("   🔧 Step 4: Executing query...")
-        try:
-            result = db.execute_query(query)
-            print(f"      ✅ Execution completed")
-            print(f"      📊 Success: {result.success}")
-            print(f"      📊 Records: {len(result.data)}")
-            print(f"      📊 Time: {result.execution_time:.3f}s")
-            
-            if result.error:
-                print(f"      ⚠️ Error: {result.error}")
-            
-            if result.data:
-                print(f"      📋 Sample results:")
-                for i, record in enumerate(result.data[:3]):
-                    print(f"         {i+1}: {record}")
-            else:
-                print(f"      ⚠️ No results returned")
-                
-        except Exception as e:
-            print(f"      ❌ Execution failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+        if hasattr(logical_plan, 'projections'):
+            print(f"Logical plan projections: {logical_plan.projections}")
+        if hasattr(logical_plan, 'items'):
+            print(f"Logical plan items: {logical_plan.items}")
         
+        # Create physical plan
+        physical_planner = PhysicalPlanner()
+        physical_plan = physical_planner.create_physical_plan(logical_plan)
+        print(f"Physical plan: {type(physical_plan).__name__}")
+        
+        if hasattr(physical_plan, 'logical_op') and physical_plan.logical_op:
+            log_op = physical_plan.logical_op
+            print(f"Physical plan logical op: {type(log_op).__name__}")
+            if hasattr(log_op, 'projections'):
+                print(f"Physical logical op projections: {log_op.projections}")
+            if hasattr(log_op, 'items'):
+                print(f"Physical logical op items: {log_op.items}")
+        
+        print("✅ Debug info collected")
         return True
         
     except Exception as e:
-        print(f"   ❌ Query debug failed: {e}")
-        return False
-
-def debug_redis_executor():
-    """Debug Redis executor specifically"""
-    print("\n🔍 Debugging Redis Executor...")
-    
-    try:
-        from mylathdb.execution_engine.config import MyLathDBExecutionConfig
-        from mylathdb.execution_engine.redis_executor import RedisExecutor
-        
-        # Create Redis executor
-        config = MyLathDBExecutionConfig()
-        config.AUTO_START_REDIS = False
-        redis_executor = RedisExecutor(config)
-        
-        print("   🔧 Initializing Redis executor...")
-        try:
-            redis_executor.initialize()
-            print("   ✅ Redis executor initialized")
-        except Exception as e:
-            print(f"   ⚠️ Redis initialization warning: {e}")
-            print("   ℹ️ Continuing with limited testing...")
-        
-        # Test Redis status
-        status = redis_executor.get_status()
-        print(f"   📊 Redis Status:")
-        print(f"      Connected: {status.get('connected', False)}")
-        print(f"      Host: {status.get('host', 'unknown')}")
-        print(f"      Port: {status.get('port', 'unknown')}")
-        
-        if status.get('connected'):
-            print("   🧪 Testing Redis operations...")
-            
-            # Test basic Redis operations
-            test_data = {"name": "TestNode", "age": "25"}
-            key = "test:node:1"
-            
-            try:
-                redis_executor.redis.hset(key, mapping=test_data)
-                retrieved = redis_executor.redis.hgetall(key)
-                print(f"      ✅ Redis read/write test: {retrieved}")
-                
-                # Cleanup
-                redis_executor.redis.delete(key)
-                
-            except Exception as e:
-                print(f"      ❌ Redis operation failed: {e}")
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ Redis executor debug failed: {e}")
-        return False
-
-def debug_data_retrieval():
-    """Debug data retrieval specifically"""
-    print("\n🔍 Debugging Data Retrieval...")
-    
-    try:
-        from mylathdb import MyLathDB
-        
-        # Create database
-        db = MyLathDB(auto_start_redis=False)
-        
-        # Load minimal test data
-        test_nodes = [
-            {"id": "1", "name": "Alice", "_labels": ["Person"]},
-        ]
-        
-        print("   📝 Loading test node...")
-        db.load_graph_data(nodes=test_nodes)
-        
-        # Test direct Redis access
-        if db.engine.redis_executor.redis:
-            redis_client = db.engine.redis_executor.redis
-            
-            print("   🔍 Direct Redis check:")
-            
-            # Check if node exists
-            node_key = "node:1"
-            node_data = redis_client.hgetall(node_key)
-            print(f"      Node data: {node_data}")
-            
-            # Check label index
-            label_key = "label:Person"
-            label_members = redis_client.smembers(label_key)
-            print(f"      Label Person members: {list(label_members)}")
-            
-            # Test Redis executor operation
-            print("   🧪 Testing Redis executor operations...")
-            
-            # Create a simple logical operation for testing
-            class MockLogicalOp:
-                def __init__(self):
-                    self.variable = "n"
-                    self.labels = ["Person"]
-                    self.properties = {}
-            
-            class MockContext:
-                def __init__(self):
-                    self.parameters = {}
-            
-            mock_op = MockLogicalOp()
-            mock_context = MockContext()
-            
-            try:
-                # Test node scan directly
-                results = db.engine.redis_executor._execute_node_scan_fixed(mock_op, mock_context)
-                print(f"      ✅ Direct node scan returned: {len(results)} results")
-                
-                if results:
-                    print(f"      📋 Sample result: {results[0]}")
-                else:
-                    print("      ⚠️ No results from direct scan")
-                
-            except Exception as e:
-                print(f"      ❌ Direct scan failed: {e}")
-                import traceback
-                traceback.print_exc()
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ Data retrieval debug failed: {e}")
+        print(f"❌ Debug failed: {e}")
         import traceback
         traceback.print_exc()
         return False
 
-def debug_property_expression_error():
-    """Debug the PropertyExpression error specifically"""
-    print("\n🔍 Debugging PropertyExpression Error...")
-    
-    try:
-        from mylathdb.cypher_planner import parse_cypher_query
-        
-        # Test the problematic query
-        problematic_query = "MATCH (p1:Person)-[:WORKS_AT]->(c:Company)<-[:WORKS_AT]-(p2:Person) WHERE p1.name < p2.name RETURN p1.name, p2.name, c.name"
-        
-        print(f"   🧪 Parsing problematic query...")
-        print(f"      Query: {problematic_query}")
-        
-        try:
-            ast = parse_cypher_query(problematic_query)
-            print("   ✅ Query parsed successfully")
-            
-            # Check WHERE clause
-            if ast.where_clause:
-                print(f"   🔍 WHERE clause condition: {ast.where_clause.condition}")
-                print(f"   🔍 Condition type: {type(ast.where_clause.condition).__name__}")
-                
-                # Check if it's a binary expression
-                if hasattr(ast.where_clause.condition, 'left'):
-                    left = ast.where_clause.condition.left
-                    print(f"   🔍 Left side: {left} (type: {type(left).__name__})")
-                    
-                    # Check if left side has required attributes
-                    if hasattr(left, 'variable'):
-                        print(f"      Variable: {left.variable}")
-                    if hasattr(left, 'property_name'):
-                        print(f"      Property: {left.property_name}")
-                    if hasattr(left, 'value'):
-                        print(f"      Value: {left.value}")
-                    else:
-                        print(f"      ⚠️ Missing 'value' attribute!")
-                
-                if hasattr(ast.where_clause.condition, 'right'):
-                    right = ast.where_clause.condition.right
-                    print(f"   🔍 Right side: {right} (type: {type(right).__name__})")
-                    
-                    if hasattr(right, 'variable'):
-                        print(f"      Variable: {right.variable}")
-                    if hasattr(right, 'property_name'):
-                        print(f"      Property: {right.property_name}")
-                    if hasattr(right, 'value'):
-                        print(f"      Value: {right.value}")
-                    else:
-                        print(f"      ⚠️ Missing 'value' attribute!")
-            
-        except Exception as e:
-            print(f"   ❌ Query parsing failed: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ PropertyExpression debug failed: {e}")
-        return False
-
-def suggest_fixes():
-    """Suggest fixes based on debug results"""
-    print("\n💡 Suggested Fixes:")
-    print("=" * 50)
-    
-    print("\n1. 🔧 **Data Loading Issue:**")
-    print("   - Data may not be stored correctly in Redis")
-    print("   - Check Redis connection and storage methods")
-    print("   - Verify data format and indexing")
-    
-    print("\n2. 🔧 **Query Execution Routing:**")
-    print("   - Queries may not be routed to correct executor")
-    print("   - Check physical plan generation")
-    print("   - Verify Redis executor operations")
-    
-    print("\n3. 🔧 **PropertyExpression Error:**")
-    print("   - Fix missing 'value' attribute in PropertyExpression")
-    print("   - Update property filter handling")
-    print("   - Check AST node structure")
-    
-    print("\n4. 🔧 **Coordination Issues:**")
-    print("   - Improve Redis/GraphBLAS coordination")
-    print("   - Fix data bridge synchronization")
-    print("   - Check result formatting")
-
-def main():
-    """Run comprehensive debug analysis"""
-    print("🔍 MyLathDB Debug and Analysis")
-    print("=" * 50)
-    
-    debug_results = {}
-    
-    # Run debug tests
-    debug_results['data_loading'] = debug_data_loading()
-    debug_results['simple_query'] = debug_simple_query()
-    debug_results['redis_executor'] = debug_redis_executor()
-    debug_results['data_retrieval'] = debug_data_retrieval()
-    debug_results['property_error'] = debug_property_expression_error()
-    
-    # Summary
-    print("\n" + "=" * 50)
-    print("📊 Debug Results Summary:")
-    
-    for test_name, result in debug_results.items():
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"   {test_name.replace('_', ' ').title()}: {status}")
-    
-    passed = sum(1 for r in debug_results.values() if r)
-    total = len(debug_results)
-    
-    print(f"\n🎯 Debug Success Rate: {passed}/{total} ({(passed/total)*100:.1f}%)")
-    
-    # Suggest fixes
-    suggest_fixes()
-    
-    return passed >= total * 0.6  # 60% pass rate for debugging
-
+# RUN THIS TO DEBUG:
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    debug_projection_issue()
