@@ -1,0 +1,416 @@
+🚀 MyLathDB Streamlined Test Suite
+==================================================
+📅 2025-06-17 13:43:12
+==================================================
+🧪 Testing Projection Fix...
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 1
+📋 Sample base result: {'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}}
+🎯 Logical operation: Project
+✅ Found 1 projections
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}
+✅ Direct property access: name = Alice
+✅ Projection: n.name = Alice
+🎉 Final projected results: [{'n.name': 'Alice'}]
+🔧 [FIXED] Redis result: [{'n.name': 'Alice'}]
+   ✅ Projection working correctly
+🧪 Testing Basic Functionality...
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 2
+📋 Sample base result: {'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}}
+🎯 Logical operation: Project
+✅ Found 1 projections
+🔍 Evaluating: n (type: VariableExpression)
+✅ Variable 'n' = {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}
+✅ Projection: n = {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}
+🔍 Evaluating: n (type: VariableExpression)
+✅ Variable 'n' = {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25}
+✅ Projection: n = {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25}
+🎉 Final projected results: [{'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}}, {'n': {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25}}]
+🔧 [FIXED] Redis result: [{'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}}, {'n': {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25}}]
+   ✅ Node scan: 2/2 results
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 2
+📋 Sample base result: {'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}}
+🎯 Logical operation: Project
+✅ Found 1 projections
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}
+✅ Direct property access: name = Alice
+✅ Projection: n.name = Alice
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25}
+✅ Direct property access: name = Bob
+✅ Projection: n.name = Bob
+🎉 Final projected results: [{'n.name': 'Alice'}, {'n.name': 'Bob'}]
+🔧 [FIXED] Redis result: [{'n.name': 'Alice'}, {'n.name': 'Bob'}]
+   ✅ Property projection: 2/2 results
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 2
+📋 Sample base result: {'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}}
+🎯 Logical operation: Project
+✅ Found 1 projections
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30}
+✅ Direct property access: name = Alice
+✅ Projection: n.name = Alice
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25}
+✅ Direct property access: name = Bob
+✅ Projection: n.name = Bob
+🎉 Final projected results: [{'n.name': 'Alice'}, {'n.name': 'Bob'}]
+🔧 [FIXED] Redis result: [{'n.name': 'Alice'}, {'n.name': 'Bob'}]
+   ❌ Property filter: 2/1 results
+🧪 Testing Complex Queries...
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 3
+📋 Sample base result: {'n': {'_id': '3', '_labels': ['Person'], 'name': 'Charlie', 'age': 35, 'city': 'NYC'}}
+🎯 Logical operation: Project
+✅ Found 2 projections
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '3', '_labels': ['Person'], 'name': 'Charlie', 'age': 35, 'city': 'NYC'}
+✅ Direct property access: name = Charlie
+✅ Projection: n.name = Charlie
+🔍 Evaluating: n.age (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '3', '_labels': ['Person'], 'name': 'Charlie', 'age': 35, 'city': 'NYC'}
+✅ Direct property access: age = 35
+✅ Projection: n.age = 35
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30, 'city': 'NYC'}
+✅ Direct property access: name = Alice
+✅ Projection: n.name = Alice
+🔍 Evaluating: n.age (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30, 'city': 'NYC'}
+✅ Direct property access: age = 30
+✅ Projection: n.age = 30
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25, 'city': 'LA'}
+✅ Direct property access: name = Bob
+✅ Projection: n.name = Bob
+🔍 Evaluating: n.age (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25, 'city': 'LA'}
+✅ Direct property access: age = 25
+✅ Projection: n.age = 25
+🎉 Final projected results: [{'n.name': 'Charlie', 'n.age': 35}, {'n.name': 'Alice', 'n.age': 30}, {'n.name': 'Bob', 'n.age': 25}]
+🔧 [FIXED] Redis result: [{'n.name': 'Charlie', 'n.age': 35}, {'n.name': 'Alice', 'n.age': 30}, {'n.name': 'Bob', 'n.age': 25}]
+   ✅ Multiple properties: 3/3 results
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 3
+📋 Sample base result: {'n': {'_id': '3', '_labels': ['Person'], 'name': 'Charlie', 'age': 35, 'city': 'NYC'}}
+🎯 Logical operation: Project
+✅ Found 1 projections
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '3', '_labels': ['Person'], 'name': 'Charlie', 'age': 35, 'city': 'NYC'}
+✅ Direct property access: name = Charlie
+✅ Projection: person_name = Charlie
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30, 'city': 'NYC'}
+✅ Direct property access: name = Alice
+✅ Projection: person_name = Alice
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25, 'city': 'LA'}
+✅ Direct property access: name = Bob
+✅ Projection: person_name = Bob
+🎉 Final projected results: [{'person_name': 'Charlie'}, {'person_name': 'Alice'}, {'person_name': 'Bob'}]
+🔧 [FIXED] Redis result: [{'person_name': 'Charlie'}, {'person_name': 'Alice'}, {'person_name': 'Bob'}]
+   ✅ Alias projection: 3/3 results
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 3
+📋 Sample base result: {'n': {'_id': '3', '_labels': ['Person'], 'name': 'Charlie', 'age': 35, 'city': 'NYC'}}
+🎯 Logical operation: Project
+✅ Found 2 projections
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '3', '_labels': ['Person'], 'name': 'Charlie', 'age': 35, 'city': 'NYC'}
+✅ Direct property access: name = Charlie
+✅ Projection: n.name = Charlie
+🔍 Evaluating: n.city (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '3', '_labels': ['Person'], 'name': 'Charlie', 'age': 35, 'city': 'NYC'}
+✅ Direct property access: city = NYC
+✅ Projection: n.city = NYC
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30, 'city': 'NYC'}
+✅ Direct property access: name = Alice
+✅ Projection: n.name = Alice
+🔍 Evaluating: n.city (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice', 'age': 30, 'city': 'NYC'}
+✅ Direct property access: city = NYC
+✅ Projection: n.city = NYC
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25, 'city': 'LA'}
+✅ Direct property access: name = Bob
+✅ Projection: n.name = Bob
+🔍 Evaluating: n.city (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '2', '_labels': ['Person'], 'name': 'Bob', 'age': 25, 'city': 'LA'}
+✅ Direct property access: city = LA
+✅ Projection: n.city = LA
+🎉 Final projected results: [{'n.name': 'Charlie', 'n.city': 'NYC'}, {'n.name': 'Alice', 'n.city': 'NYC'}, {'n.name': 'Bob', 'n.city': 'LA'}]
+🔧 [FIXED] Redis result: [{'n.name': 'Charlie', 'n.city': 'NYC'}, {'n.name': 'Alice', 'n.city': 'NYC'}, {'n.name': 'Bob', 'n.city': 'LA'}]
+   ❌ Filtered projection: 3/2 results
+      Sample result: {'n.name': 'Charlie', 'n.city': 'NYC'}
+🧪 Testing Edge Cases...
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 1
+📋 Sample base result: {'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice'}}
+🎯 Logical operation: Project
+✅ Found 1 projections
+🔍 Evaluating: n.nonexistent (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice'}
+❌ Property 'nonexistent' not found
+✅ Projection: n.nonexistent = None
+🎉 Final projected results: [{'n.nonexistent': None}]
+🔧 [FIXED] Redis result: [{'n.nonexistent': None}]
+   ✅ Non-existent property: 1/1 results
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 0
+🎯 Logical operation: Project
+✅ Found 1 projections
+🎉 Final projected results: []
+🔧 [FIXED] Redis result: []
+   ✅ Non-existent label: 0/0 results
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 1
+📋 Sample base result: {'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice'}}
+🎯 Logical operation: Project
+✅ Found 1 projections
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Alice'}
+✅ Direct property access: name = Alice
+✅ Projection: n.name = Alice
+🎉 Final projected results: [{'n.name': 'Alice'}]
+🔧 [FIXED] Redis result: [{'n.name': 'Alice'}]
+   ❌ Empty filter: 1/0 results
+🧪 Testing Performance...
+🔧 [FIXED] Executing physical plan: RedisOperation
+🔍 === FINAL PROJECT OPERATION ===
+📊 Base results: 50
+📋 Sample base result: {'n': {'_id': '9', '_labels': ['Person'], 'name': 'Person9', 'age': 29}}
+🎯 Logical operation: Project
+✅ Found 1 projections
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '9', '_labels': ['Person'], 'name': 'Person9', 'age': 29}
+✅ Direct property access: name = Person9
+✅ Projection: n.name = Person9
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '2', '_labels': ['Person'], 'name': 'Person2', 'age': 22}
+✅ Direct property access: name = Person2
+✅ Projection: n.name = Person2
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '32', '_labels': ['Person'], 'name': 'Person32', 'age': 52}
+✅ Direct property access: name = Person32
+✅ Projection: n.name = Person32
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '36', '_labels': ['Person'], 'name': 'Person36', 'age': 56}
+✅ Direct property access: name = Person36
+✅ Projection: n.name = Person36
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '10', '_labels': ['Person'], 'name': 'Person10', 'age': 30}
+✅ Direct property access: name = Person10
+✅ Projection: n.name = Person10
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '21', '_labels': ['Person'], 'name': 'Person21', 'age': 41}
+✅ Direct property access: name = Person21
+✅ Projection: n.name = Person21
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '39', '_labels': ['Person'], 'name': 'Person39', 'age': 59}
+✅ Direct property access: name = Person39
+✅ Projection: n.name = Person39
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '46', '_labels': ['Person'], 'name': 'Person46', 'age': 66}
+✅ Direct property access: name = Person46
+✅ Projection: n.name = Person46
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '22', '_labels': ['Person'], 'name': 'Person22', 'age': 42}
+✅ Direct property access: name = Person22
+✅ Projection: n.name = Person22
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '11', '_labels': ['Person'], 'name': 'Person11', 'age': 31}
+✅ Direct property access: name = Person11
+✅ Projection: n.name = Person11
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '1', '_labels': ['Person'], 'name': 'Person1', 'age': 21}
+✅ Direct property access: name = Person1
+✅ Projection: n.name = Person1
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '34', '_labels': ['Person'], 'name': 'Person34', 'age': 54}
+✅ Direct property access: name = Person34
+✅ Projection: n.name = Person34
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '4', '_labels': ['Person'], 'name': 'Person4', 'age': 24}
+✅ Direct property access: name = Person4
+✅ Projection: n.name = Person4
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '27', '_labels': ['Person'], 'name': 'Person27', 'age': 47}
+✅ Direct property access: name = Person27
+✅ Projection: n.name = Person27
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '7', '_labels': ['Person'], 'name': 'Person7', 'age': 27}
+✅ Direct property access: name = Person7
+✅ Projection: n.name = Person7
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '29', '_labels': ['Person'], 'name': 'Person29', 'age': 49}
+✅ Direct property access: name = Person29
+✅ Projection: n.name = Person29
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '6', '_labels': ['Person'], 'name': 'Person6', 'age': 26}
+✅ Direct property access: name = Person6
+✅ Projection: n.name = Person6
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '14', '_labels': ['Person'], 'name': 'Person14', 'age': 34}
+✅ Direct property access: name = Person14
+✅ Projection: n.name = Person14
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '23', '_labels': ['Person'], 'name': 'Person23', 'age': 43}
+✅ Direct property access: name = Person23
+✅ Projection: n.name = Person23
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '20', '_labels': ['Person'], 'name': 'Person20', 'age': 40}
+✅ Direct property access: name = Person20
+✅ Projection: n.name = Person20
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '24', '_labels': ['Person'], 'name': 'Person24', 'age': 44}
+✅ Direct property access: name = Person24
+✅ Projection: n.name = Person24
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '28', '_labels': ['Person'], 'name': 'Person28', 'age': 48}
+✅ Direct property access: name = Person28
+✅ Projection: n.name = Person28
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '43', '_labels': ['Person'], 'name': 'Person43', 'age': 63}
+✅ Direct property access: name = Person43
+✅ Projection: n.name = Person43
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '38', '_labels': ['Person'], 'name': 'Person38', 'age': 58}
+✅ Direct property access: name = Person38
+✅ Projection: n.name = Person38
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '5', '_labels': ['Person'], 'name': 'Person5', 'age': 25}
+✅ Direct property access: name = Person5
+✅ Projection: n.name = Person5
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '13', '_labels': ['Person'], 'name': 'Person13', 'age': 33}
+✅ Direct property access: name = Person13
+✅ Projection: n.name = Person13
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '30', '_labels': ['Person'], 'name': 'Person30', 'age': 50}
+✅ Direct property access: name = Person30
+✅ Projection: n.name = Person30
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '35', '_labels': ['Person'], 'name': 'Person35', 'age': 55}
+✅ Direct property access: name = Person35
+✅ Projection: n.name = Person35
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '19', '_labels': ['Person'], 'name': 'Person19', 'age': 39}
+✅ Direct property access: name = Person19
+✅ Projection: n.name = Person19
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '31', '_labels': ['Person'], 'name': 'Person31', 'age': 51}
+✅ Direct property access: name = Person31
+✅ Projection: n.name = Person31
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '37', '_labels': ['Person'], 'name': 'Person37', 'age': 57}
+✅ Direct property access: name = Person37
+✅ Projection: n.name = Person37
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '0', '_labels': ['Person'], 'name': 'Person0', 'age': 20}
+✅ Direct property access: name = Person0
+✅ Projection: n.name = Person0
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '45', '_labels': ['Person'], 'name': 'Person45', 'age': 65}
+✅ Direct property access: name = Person45
+✅ Projection: n.name = Person45
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '18', '_labels': ['Person'], 'name': 'Person18', 'age': 38}
+✅ Direct property access: name = Person18
+✅ Projection: n.name = Person18
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '25', '_labels': ['Person'], 'name': 'Person25', 'age': 45}
+✅ Direct property access: name = Person25
+✅ Projection: n.name = Person25
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '47', '_labels': ['Person'], 'name': 'Person47', 'age': 67}
+✅ Direct property access: name = Person47
+✅ Projection: n.name = Person47
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '17', '_labels': ['Person'], 'name': 'Person17', 'age': 37}
+✅ Direct property access: name = Person17
+✅ Projection: n.name = Person17
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '49', '_labels': ['Person'], 'name': 'Person49', 'age': 69}
+✅ Direct property access: name = Person49
+✅ Projection: n.name = Person49
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '33', '_labels': ['Person'], 'name': 'Person33', 'age': 53}
+✅ Direct property access: name = Person33
+✅ Projection: n.name = Person33
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '40', '_labels': ['Person'], 'name': 'Person40', 'age': 60}
+✅ Direct property access: name = Person40
+✅ Projection: n.name = Person40
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '41', '_labels': ['Person'], 'name': 'Person41', 'age': 61}
+✅ Direct property access: name = Person41
+✅ Projection: n.name = Person41
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '42', '_labels': ['Person'], 'name': 'Person42', 'age': 62}
+✅ Direct property access: name = Person42
+✅ Projection: n.name = Person42
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '15', '_labels': ['Person'], 'name': 'Person15', 'age': 35}
+✅ Direct property access: name = Person15
+✅ Projection: n.name = Person15
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '44', '_labels': ['Person'], 'name': 'Person44', 'age': 64}
+✅ Direct property access: name = Person44
+✅ Projection: n.name = Person44
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '8', '_labels': ['Person'], 'name': 'Person8', 'age': 28}
+✅ Direct property access: name = Person8
+✅ Projection: n.name = Person8
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '3', '_labels': ['Person'], 'name': 'Person3', 'age': 23}
+✅ Direct property access: name = Person3
+✅ Projection: n.name = Person3
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '12', '_labels': ['Person'], 'name': 'Person12', 'age': 32}
+✅ Direct property access: name = Person12
+✅ Projection: n.name = Person12
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '16', '_labels': ['Person'], 'name': 'Person16', 'age': 36}
+✅ Direct property access: name = Person16
+✅ Projection: n.name = Person16
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '48', '_labels': ['Person'], 'name': 'Person48', 'age': 68}
+✅ Direct property access: name = Person48
+✅ Projection: n.name = Person48
+🔍 Evaluating: n.name (type: PropertyExpression)
+📦 Entity for 'n': {'_id': '26', '_labels': ['Person'], 'name': 'Person26', 'age': 46}
+✅ Direct property access: name = Person26
+✅ Projection: n.name = Person26
+🎉 Final projected results: [{'n.name': 'Person9'}, {'n.name': 'Person2'}, {'n.name': 'Person32'}, {'n.name': 'Person36'}, {'n.name': 'Person10'}, {'n.name': 'Person21'}, {'n.name': 'Person39'}, {'n.name': 'Person46'}, {'n.name': 'Person22'}, {'n.name': 'Person11'}, {'n.name': 'Person1'}, {'n.name': 'Person34'}, {'n.name': 'Person4'}, {'n.name': 'Person27'}, {'n.name': 'Person7'}, {'n.name': 'Person29'}, {'n.name': 'Person6'}, {'n.name': 'Person14'}, {'n.name': 'Person23'}, {'n.name': 'Person20'}, {'n.name': 'Person24'}, {'n.name': 'Person28'}, {'n.name': 'Person43'}, {'n.name': 'Person38'}, {'n.name': 'Person5'}, {'n.name': 'Person13'}, {'n.name': 'Person30'}, {'n.name': 'Person35'}, {'n.name': 'Person19'}, {'n.name': 'Person31'}, {'n.name': 'Person37'}, {'n.name': 'Person0'}, {'n.name': 'Person45'}, {'n.name': 'Person18'}, {'n.name': 'Person25'}, {'n.name': 'Person47'}, {'n.name': 'Person17'}, {'n.name': 'Person49'}, {'n.name': 'Person33'}, {'n.name': 'Person40'}, {'n.name': 'Person41'}, {'n.name': 'Person42'}, {'n.name': 'Person15'}, {'n.name': 'Person44'}, {'n.name': 'Person8'}, {'n.name': 'Person3'}, {'n.name': 'Person12'}, {'n.name': 'Person16'}, {'n.name': 'Person48'}, {'n.name': 'Person26'}]
+🔧 [FIXED] Redis result: [{'n.name': 'Person9'}, {'n.name': 'Person2'}, {'n.name': 'Person32'}, {'n.name': 'Person36'}, {'n.name': 'Person10'}, {'n.name': 'Person21'}, {'n.name': 'Person39'}, {'n.name': 'Person46'}, {'n.name': 'Person22'}, {'n.name': 'Person11'}, {'n.name': 'Person1'}, {'n.name': 'Person34'}, {'n.name': 'Person4'}, {'n.name': 'Person27'}, {'n.name': 'Person7'}, {'n.name': 'Person29'}, {'n.name': 'Person6'}, {'n.name': 'Person14'}, {'n.name': 'Person23'}, {'n.name': 'Person20'}, {'n.name': 'Person24'}, {'n.name': 'Person28'}, {'n.name': 'Person43'}, {'n.name': 'Person38'}, {'n.name': 'Person5'}, {'n.name': 'Person13'}, {'n.name': 'Person30'}, {'n.name': 'Person35'}, {'n.name': 'Person19'}, {'n.name': 'Person31'}, {'n.name': 'Person37'}, {'n.name': 'Person0'}, {'n.name': 'Person45'}, {'n.name': 'Person18'}, {'n.name': 'Person25'}, {'n.name': 'Person47'}, {'n.name': 'Person17'}, {'n.name': 'Person49'}, {'n.name': 'Person33'}, {'n.name': 'Person40'}, {'n.name': 'Person41'}, {'n.name': 'Person42'}, {'n.name': 'Person15'}, {'n.name': 'Person44'}, {'n.name': 'Person8'}, {'n.name': 'Person3'}, {'n.name': 'Person12'}, {'n.name': 'Person16'}, {'n.name': 'Person48'}, {'n.name': 'Person26'}]
+   📊 Load time: 0.089s for 50 nodes
+   📊 Query time: 0.034s -> 50 results
+   ✅ Performance acceptable
+
+==================================================
+📊 TEST RESULTS SUMMARY
+==================================================
+✅ PASSED Projection Fix
+❌ FAILED Basic Functionality
+❌ FAILED Complex Queries
+❌ FAILED Edge Cases
+✅ PASSED Performance
+
+🎯 Overall: 2/5 tests passed (40.0%)
+⚠️  Several tests failed. Review issues above.

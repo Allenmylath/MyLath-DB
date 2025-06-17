@@ -1,318 +1,243 @@
-# run_streamlined_tests.py
+# filter_execution_tracer.py - Trace exactly where filters are lost
 
 """
-Streamlined MyLathDB Test Suite - Minimal Logging
-Only logs essential information to keep output clean
+Filter Execution Tracer
+Detailed tracing to understand exactly where in the execution chain filters are being bypassed
 """
 
 import sys
-import os
-from datetime import datetime
-from io import StringIO
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent))
 
-sys.path.insert(0, 'mylathdb')
+def trace_filter_execution():
+    """Trace filter execution step by step"""
+    print("🔬 === FILTER EXECUTION TRACER ===\n")
+    
+    from mylathdb import MyLathDB
+    
+    # Setup minimal test case
+    db = MyLathDB()
+    if db.engine.redis_executor.redis:
+        db.engine.redis_executor.redis.flushdb()
+    
+    # Load exactly 2 nodes for crystal clear testing
+    nodes = [
+        {'id': '1', 'name': 'Alice', 'age': 30, '_labels': ['Person']},
+        {'id': '2', 'name': 'Bob', 'age': 25, '_labels': ['Person']},
+    ]
+    db.load_graph_data(nodes=nodes)
+    
+    print("✅ Test data loaded:")
+    print("   Node 1: Alice, age=30")
+    print("   Node 2: Bob, age=25")
+    print()
+    
+    # Test the problematic query
+    query = "MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name"
+    print(f"🧪 Testing: {query}")
+    print("Expected: 1 result (Alice only)")
+    print()
+    
+    # STEP 1: Verify Redis has the right data
+    print("1. 📊 Redis Data Verification:")
+    redis = db.engine.redis_executor.redis
+    print(f"   All Person nodes: {list(redis.smembers('label:Person'))}")
+    print(f"   Nodes with name=Alice: {list(redis.smembers('prop:name:Alice'))}")
+    print(f"   Nodes with name=Bob: {list(redis.smembers('prop:name:Bob'))}")
+    print()
+    
+    # STEP 2: Parse and analyze the plan structure
+    print("2. 🧠 Plan Structure Analysis:")
+    from mylathdb.cypher_planner import parse_cypher_query, LogicalPlanner, PhysicalPlanner
+    
+    ast = parse_cypher_query(query)
+    logical_planner = LogicalPlanner()
+    logical_plan = logical_planner.create_logical_plan(ast)
+    physical_planner = PhysicalPlanner()
+    physical_plan = physical_planner.create_physical_plan(logical_plan)
+    
+    print("   Logical Plan Structure:")
+    print_plan_structure(logical_plan, "     ")
+    
+    print("   Physical Plan Structure:")
+    print_plan_structure(physical_plan, "     ", is_physical=True)
+    print()
+    
+    # STEP 3: Manual execution tracing
+    print("3. 🔧 Manual Execution Tracing:")
+    
+    # Get Redis executor
+    redis_executor = db.engine.redis_executor
+    
+    # Step 3a: Test NodeByLabelScan alone
+    print("   3a. Testing NodeByLabelScan alone:")
+    from mylathdb.execution_engine.engine import ExecutionContext
+    context = ExecutionContext()
+    
+    # Find the NodeByLabelScan operation
+    scan_op = find_operation_by_type(physical_plan, "NodeByLabelScan")
+    if scan_op and scan_op.logical_op:
+        scan_results = redis_executor._execute_node_by_label_scan_fixed(scan_op.logical_op, context)
+        print(f"       Scan results: {len(scan_results)} records")
+        for i, result in enumerate(scan_results):
+            entity = result.get('n', {})
+            print(f"         {i+1}: {entity.get('name', 'Unknown')} (age={entity.get('age', 'Unknown')})")
+    print()
+    
+    # Step 3b: Test PropertyFilter if it exists
+    print("   3b. Testing PropertyFilter:")
+    filter_op = find_operation_by_type(physical_plan, "PropertyFilter")
+    if filter_op and filter_op.logical_op:
+        print(f"       Found PropertyFilter: {filter_op.logical_op.property_key} {filter_op.logical_op.operator} {filter_op.logical_op.value}")
+        
+        # Try to execute the filter using the scan results as input
+        print("       Attempting filter execution with scan results as input...")
+        try:
+            # This is where we'll see if the filter logic works
+            filter_results = redis_executor._execute_property_filter_fixed(filter_op.logical_op, context)
+            print(f"       Filter results: {len(filter_results)} records")
+            for i, result in enumerate(filter_results):
+                entity = result.get('n', {})
+                print(f"         {i+1}: {entity.get('name', 'Unknown')} (age={entity.get('age', 'Unknown')})")
+        except Exception as e:
+            print(f"       Filter execution failed: {e}")
+    else:
+        print("       No PropertyFilter found in physical plan!")
+    print()
+    
+    # Step 3c: Test Project operation
+    print("   3c. Testing Project operation:")
+    project_op = find_operation_by_type(physical_plan, "Project")
+    if project_op:
+        print("       Found Project operation")
+        # The project operation should execute its children and then project
+        print("       Project should execute children first, then apply projections")
+    print()
+    
+    # STEP 4: Execute the full query and compare
+    print("4. 🚀 Full Query Execution:")
+    result = db.execute_query(query)
+    print(f"   Success: {result.success}")
+    print(f"   Result count: {len(result.data)}")
+    print(f"   Results: {result.data}")
+    
+    # STEP 5: Analysis
+    print("\n5. 🎯 Analysis:")
+    if len(result.data) == 1:
+        entity_name = None
+        for record in result.data:
+            if 'n.name' in record:
+                entity_name = record['n.name']
+        
+        if entity_name == 'Alice':
+            print("   ✅ Filter working correctly - got Alice only")
+        else:
+            print(f"   ⚠️  Got 1 result but wrong entity: {entity_name}")
+    elif len(result.data) == 2:
+        print("   ❌ Filter NOT working - got both Alice and Bob")
+        print("   🔍 This confirms filters are being bypassed")
+    elif len(result.data) == 0:
+        print("   ⚠️  Over-filtering - got no results")
+    else:
+        print(f"   ⚠️  Unexpected result count: {len(result.data)}")
 
-class StreamlinedLogger:
-    """Streamlined logger - only essential output"""
-    
-    def __init__(self, filename, verbose=False):
-        self.filename = filename
-        self.console = sys.stdout
-        self.file_buffer = StringIO()
-        self.verbose = verbose
-        
-    def write(self, text):
-        # Write to console
-        self.console.write(text)
-        # Write to buffer
-        self.file_buffer.write(text)
-        
-    def flush(self):
-        self.console.flush()
-        
-    def save_to_file(self):
-        """Save captured output to file"""
-        with open(self.filename, 'w', encoding='utf-8') as f:
-            f.write(self.file_buffer.getvalue())
-        print(f"\n📁 Test results saved to: {self.filename}")
 
-def test_basic_functionality():
-    """Test basic MyLathDB functionality"""
+def print_plan_structure(op, prefix="", is_physical=False):
+    """Print plan structure with details"""
+    op_name = type(op).__name__
+    details = []
     
-    print("🧪 Testing Basic Functionality...")
+    if is_physical:
+        if hasattr(op, 'operation_type'):
+            details.append(f"type={op.operation_type}")
+        if hasattr(op, 'logical_op') and op.logical_op:
+            details.append(f"logical={type(op.logical_op).__name__}")
+    else:
+        if hasattr(op, 'variable'):
+            details.append(f"var={op.variable}")
+        if hasattr(op, 'property_key'):
+            details.append(f"prop={op.property_key}")
+        if hasattr(op, 'operator'):
+            details.append(f"op={op.operator}")
+        if hasattr(op, 'value'):
+            details.append(f"val={op.value}")
     
-    try:
-        from mylathdb import MyLathDB
+    detail_str = f" ({', '.join(details)})" if details else ""
+    print(f"{prefix}{op_name}{detail_str}")
+    
+    for child in getattr(op, 'children', []):
+        print_plan_structure(child, prefix + "  ", is_physical)
+
+
+def find_operation_by_type(plan, operation_type):
+    """Find operation by type in plan tree"""
+    if hasattr(plan, 'operation_type') and plan.operation_type == operation_type:
+        return plan
+    
+    for child in getattr(plan, 'children', []):
+        result = find_operation_by_type(child, operation_type)
+        if result:
+            return result
+    
+    return None
+
+
+def test_multiple_filter_scenarios():
+    """Test multiple filter scenarios to establish patterns"""
+    print("🧪 === MULTIPLE FILTER SCENARIO TESTING ===\n")
+    
+    scenarios = [
+        ("String equality", "MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name", 1),
+        ("Number equality", "MATCH (n:Person) WHERE n.age = 30 RETURN n.name", 1),
+        ("Number range", "MATCH (n:Person) WHERE n.age > 25 RETURN n.name", 1),
+        ("No filter baseline", "MATCH (n:Person) RETURN n.name", 2),
+    ]
+    
+    from mylathdb import MyLathDB
+    
+    for scenario_name, query, expected_count in scenarios:
+        print(f"🔬 Testing: {scenario_name}")
+        print(f"   Query: {query}")
+        print(f"   Expected count: {expected_count}")
         
-        # Initialize and clear
+        # Fresh setup for each test
         db = MyLathDB()
-        if hasattr(db.engine.redis_executor, 'redis') and db.engine.redis_executor.redis:
+        if db.engine.redis_executor.redis:
             db.engine.redis_executor.redis.flushdb()
         
-        # Load simple test data
-        db.load_graph_data(nodes=[
+        nodes = [
             {'id': '1', 'name': 'Alice', 'age': 30, '_labels': ['Person']},
             {'id': '2', 'name': 'Bob', 'age': 25, '_labels': ['Person']},
-        ])
-        
-        # Test basic queries
-        tests = [
-            ("Node scan", "MATCH (n:Person) RETURN n", 2),
-            ("Property projection", "MATCH (n:Person) RETURN n.name", 2),
-            ("Property filter", "MATCH (n:Person) WHERE n.age > 26 RETURN n.name", 1),
         ]
-        
-        results = []
-        for test_name, query, expected_count in tests:
-            result = db.execute_query(query)
-            passed = result.success and len(result.data) == expected_count
-            results.append((test_name, passed))
-            status = "✅" if passed else "❌"
-            print(f"   {status} {test_name}: {len(result.data)}/{expected_count} results")
-        
-        return all(passed for _, passed in results)
-    
-    except Exception as e:
-        print(f"❌ Basic functionality test failed: {e}")
-        return False
-
-def test_projection_fix():
-    """Test projection corruption fix"""
-    
-    print("🧪 Testing Projection Fix...")
-    
-    try:
-        from mylathdb import MyLathDB
-        
-        db = MyLathDB()
-        if hasattr(db.engine.redis_executor, 'redis') and db.engine.redis_executor.redis:
-            db.engine.redis_executor.redis.flushdb()
-        
-        # Load test data
-        db.load_graph_data(nodes=[{
-            'id': '1', 
-            'name': 'Alice', 
-            'age': 30, 
-            '_labels': ['Person']
-        }])
-        
-        # Test projection
-        result = db.execute_query("MATCH (n:Person) RETURN n.name")
-        
-        if (result.success and 
-            result.data and 
-            len(result.data) == 1 and
-            'n.name' in result.data[0] and
-            result.data[0]['n.name'] == 'Alice'):
-            
-            print("   ✅ Projection working correctly")
-            return True
-        else:
-            print(f"   ❌ Projection failed - got: {result.data}")
-            return False
-    
-    except Exception as e:
-        print(f"   ❌ Projection test failed: {e}")
-        return False
-
-def test_complex_queries():
-    """Test more complex query patterns"""
-    
-    print("🧪 Testing Complex Queries...")
-    
-    try:
-        from mylathdb import MyLathDB
-        
-        db = MyLathDB()
-        if hasattr(db.engine.redis_executor, 'redis') and db.engine.redis_executor.redis:
-            db.engine.redis_executor.redis.flushdb()
-        
-        # Load test data
-        db.load_graph_data(nodes=[
-            {'id': '1', 'name': 'Alice', 'age': 30, 'city': 'NYC', '_labels': ['Person']},
-            {'id': '2', 'name': 'Bob', 'age': 25, 'city': 'LA', '_labels': ['Person']},
-            {'id': '3', 'name': 'Charlie', 'age': 35, 'city': 'NYC', '_labels': ['Person']},
-        ])
-        
-        # Test complex projections
-        tests = [
-            ("Multiple properties", "MATCH (n:Person) RETURN n.name, n.age", 3),
-            ("Alias projection", "MATCH (n:Person) RETURN n.name AS person_name", 3),
-            ("Filtered projection", "MATCH (n:Person) WHERE n.age > 26 RETURN n.name, n.city", 2),
-        ]
-        
-        results = []
-        for test_name, query, expected_count in tests:
-            result = db.execute_query(query)
-            passed = result.success and len(result.data) == expected_count
-            results.append((test_name, passed))
-            status = "✅" if passed else "❌"
-            print(f"   {status} {test_name}: {len(result.data)}/{expected_count} results")
-            
-            # Show sample result for failed tests
-            if not passed and result.data:
-                print(f"      Sample result: {result.data[0]}")
-        
-        return all(passed for _, passed in results)
-    
-    except Exception as e:
-        print(f"   ❌ Complex queries test failed: {e}")
-        return False
-
-def test_edge_cases():
-    """Test edge cases"""
-    
-    print("🧪 Testing Edge Cases...")
-    
-    try:
-        from mylathdb import MyLathDB
-        
-        db = MyLathDB()
-        if hasattr(db.engine.redis_executor, 'redis') and db.engine.redis_executor.redis:
-            db.engine.redis_executor.redis.flushdb()
-        
-        # Load minimal test data
-        db.load_graph_data(nodes=[
-            {'id': '1', 'name': 'Alice', '_labels': ['Person']},
-        ])
-        
-        # Test edge cases
-        tests = [
-            ("Non-existent property", "MATCH (n:Person) RETURN n.nonexistent", 1, True),
-            ("Non-existent label", "MATCH (n:NonExistent) RETURN n.name", 0, True),
-            ("Empty filter", "MATCH (n:Person) WHERE n.age > 100 RETURN n.name", 0, True),
-        ]
-        
-        results = []
-        for test_name, query, expected_count, should_succeed in tests:
-            result = db.execute_query(query)
-            passed = result.success == should_succeed and len(result.data) == expected_count
-            results.append((test_name, passed))
-            status = "✅" if passed else "❌"
-            print(f"   {status} {test_name}: {len(result.data)}/{expected_count} results")
-        
-        return all(passed for _, passed in results)
-    
-    except Exception as e:
-        print(f"   ❌ Edge cases test failed: {e}")
-        return False
-
-def test_performance():
-    """Test basic performance"""
-    
-    print("🧪 Testing Performance...")
-    
-    try:
-        import time
-        from mylathdb import MyLathDB
-        
-        db = MyLathDB()
-        if hasattr(db.engine.redis_executor, 'redis') and db.engine.redis_executor.redis:
-            db.engine.redis_executor.redis.flushdb()
-        
-        # Load moderate dataset
-        nodes = []
-        for i in range(50):  # Reduced from 100 to speed up test
-            nodes.append({
-                'id': str(i),
-                'name': f'Person{i}',
-                'age': 20 + (i % 50),
-                '_labels': ['Person']
-            })
-        
-        # Test load performance
-        load_start = time.time()
         db.load_graph_data(nodes=nodes)
-        load_time = time.time() - load_start
         
-        # Test query performance
-        query_start = time.time()
-        result = db.execute_query("MATCH (n:Person) WHERE n.age > 30 RETURN n.name")
-        query_time = time.time() - query_start
+        # Execute
+        result = db.execute_query(query)
+        actual_count = len(result.data)
         
-        print(f"   📊 Load time: {load_time:.3f}s for {len(nodes)} nodes")
-        print(f"   📊 Query time: {query_time:.3f}s -> {len(result.data)} results")
+        print(f"   Actual count: {actual_count}")
+        print(f"   Match: {'✅' if actual_count == expected_count else '❌'}")
         
-        # Performance is acceptable if operations complete reasonably quickly
-        performance_ok = load_time < 2.0 and query_time < 1.0 and result.success
+        if actual_count != expected_count:
+            print(f"   Results: {result.data}")
         
-        if performance_ok:
-            print("   ✅ Performance acceptable")
-        else:
-            print("   ⚠️  Performance slower than expected but functional")
-        
-        return performance_ok or result.success  # Pass if functional even if slow
-    
-    except Exception as e:
-        print(f"   ❌ Performance test failed: {e}")
-        return False
+        print()
+
 
 def main():
-    """Run streamlined test suite"""
+    """Run comprehensive filter tracing"""
+    print("🎯 === COMPREHENSIVE FILTER TRACING ===\n")
     
-    # Create filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"mylathdb_streamlined_results_{timestamp}.txt"
+    # Detailed execution tracing
+    trace_filter_execution()
     
-    # Set up minimal logging
-    logger = StreamlinedLogger(filename)
-    sys.stdout = logger
+    print("\n" + "="*80 + "\n")
     
-    try:
-        print("🚀 MyLathDB Streamlined Test Suite")
-        print("=" * 50)
-        print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 50)
-        
-        # Run test suite
-        tests = [
-            ("Projection Fix", test_projection_fix),
-            ("Basic Functionality", test_basic_functionality),
-            ("Complex Queries", test_complex_queries),
-            ("Edge Cases", test_edge_cases),
-            ("Performance", test_performance),
-        ]
-        
-        results = []
-        
-        for test_name, test_func in tests:
-            try:
-                result = test_func()
-                results.append((test_name, result))
-            except Exception as e:
-                print(f"❌ {test_name} crashed: {e}")
-                results.append((test_name, False))
-        
-        # Summary
-        print("\n" + "=" * 50)
-        print("📊 TEST RESULTS SUMMARY")
-        print("=" * 50)
-        
-        passed = 0
-        for test_name, result in results:
-            status = "✅ PASSED" if result else "❌ FAILED"
-            print(f"{status} {test_name}")
-            if result:
-                passed += 1
-        
-        total = len(results)
-        percentage = passed/total*100
-        
-        print(f"\n🎯 Overall: {passed}/{total} tests passed ({percentage:.1f}%)")
-        
-        if passed == total:
-            print("🎉 All tests passed! MyLathDB is working correctly.")
-        elif passed >= total * 0.8:
-            print("👍 Most tests passed. MyLathDB is largely functional.")
-        else:
-            print("⚠️  Several tests failed. Review issues above.")
-        
-        return passed == total
+    # Multiple scenario testing
+    test_multiple_filter_scenarios()
     
-    finally:
-        # Restore stdout and save results
-        sys.stdout = logger.console
-        logger.save_to_file()
+    print("🎯 === TRACING COMPLETE ===")
+
 
 if __name__ == "__main__":
     main()

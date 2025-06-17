@@ -421,25 +421,41 @@ class RedisExecutor:
         return base_results
     
     def _execute_child_operation(self, child_operation, context):
-        """Execute a child operation using appropriate method"""
+        """Execute a child operation using appropriate method - handles all operation types including filters"""
         
+        # Check for logical operation first and handle ALL operation types
         if hasattr(child_operation, 'logical_op') and child_operation.logical_op:
-            return self._execute_logical_operation(child_operation.logical_op, context)
-        elif hasattr(child_operation, 'operation_type'):
-            # Route based on operation type
+            logical_op = child_operation.logical_op
+            logical_op_name = type(logical_op).__name__
+            
+            if logical_op_name == "NodeByLabelScan":
+                return self._execute_node_by_label_scan_fixed(logical_op, context)
+            elif logical_op_name == "AllNodeScan":
+                return self._execute_all_node_scan_fixed(logical_op, context)
+            elif logical_op_name == "PropertyScan":
+                return self._execute_property_scan_fixed(logical_op, context)
+            elif logical_op_name == "NodeScan":
+                return self._execute_node_scan_fixed(logical_op, context)
+            elif logical_op_name == "PropertyFilter":
+                return self._execute_property_filter_with_children(logical_op, child_operation, context)
+            elif logical_op_name == "Project":
+                return self._execute_project_operation_final(child_operation, context)
+            elif logical_op_name == "OrderBy":
+                return self._execute_order_by_operation_final(child_operation, context)
+            elif logical_op_name == "Limit":
+                return self._execute_limit_operation_final(child_operation, context)
+            else:
+                return []
+        
+        # Fallback to operation_type if no logical_op
+        if hasattr(child_operation, 'operation_type'):
             op_type = child_operation.operation_type
             logical_op = getattr(child_operation, 'logical_op', None)
             
             if op_type == "NodeByLabelScan" and logical_op:
                 return self._execute_node_by_label_scan_fixed(logical_op, context)
-            elif op_type == "AllNodeScan" and logical_op:
-                return self._execute_all_node_scan_fixed(logical_op, context)
-            elif op_type == "PropertyScan" and logical_op:
-                return self._execute_property_scan_fixed(logical_op, context)
-            elif op_type == "NodeScan" and logical_op:
-                return self._execute_node_scan_fixed(logical_op, context)
             elif op_type == "PropertyFilter" and logical_op:
-                return self._execute_property_filter_fixed(logical_op, context)
+                return self._execute_property_filter_with_children(logical_op, child_operation, context)
             elif op_type == "Project":
                 return self._execute_project_operation_final(child_operation, context)
             elif op_type == "OrderBy":
@@ -447,12 +463,74 @@ class RedisExecutor:
             elif op_type == "Limit":
                 return self._execute_limit_operation_final(child_operation, context)
             else:
-                # Execute Redis commands directly
                 return self._execute_redis_commands_fixed(child_operation, context)
         
-        logger.warning(f"Unknown child operation: {type(child_operation)}")
         return []
-    
+
+    def _execute_property_filter_with_children(self, logical_op, physical_op, context):
+        """Execute PropertyFilter by getting results from children first, then applying filter"""
+        
+        # Get base results from child operations
+        base_results = []
+        for child in physical_op.children:
+            child_results = self._execute_child_operation(child, context)
+            base_results.extend(child_results)
+        
+        if not base_results:
+            return []
+        
+        # Apply the property filter to the base results
+        filtered_results = []
+        
+        for result in base_results:
+            entity = result.get(logical_op.variable)
+            if not entity or not isinstance(entity, dict):
+                continue
+            
+            property_value = entity.get(logical_op.property_key)
+            if property_value is None:
+                continue
+            
+            if self._evaluate_filter_condition(property_value, logical_op.operator, logical_op.value):
+                filtered_results.append(result)
+        
+        return filtered_results
+
+    def _evaluate_filter_condition(self, actual_value, operator, expected_value):
+        """Evaluate filter condition with type conversion and operator handling"""
+        
+        try:
+            # Convert values to comparable types
+            if isinstance(expected_value, (int, float)) and isinstance(actual_value, str):
+                try:
+                    actual_value = float(actual_value)
+                except ValueError:
+                    return False
+            
+            # Apply operator
+            if operator == "=":
+                return actual_value == expected_value
+            elif operator == "!=":
+                return actual_value != expected_value
+            elif operator == ">":
+                return actual_value > expected_value
+            elif operator == ">=":
+                return actual_value >= expected_value
+            elif operator == "<":
+                return actual_value < expected_value
+            elif operator == "<=":
+                return actual_value <= expected_value
+            elif operator.upper() == "CONTAINS":
+                return str(expected_value) in str(actual_value)
+            elif operator.upper() == "STARTS WITH":
+                return str(actual_value).startswith(str(expected_value))
+            elif operator.upper() == "ENDS WITH":
+                return str(actual_value).endswith(str(expected_value))
+            else:
+                return False
+                
+        except Exception:
+            return False    
     def _execute_logical_operation(self, logical_op, context):
         """Execute logical operation directly"""
         
