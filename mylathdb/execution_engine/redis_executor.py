@@ -419,82 +419,129 @@ class RedisExecutor:
             print(f"✅ Applied limit (skip={skip}, limit={limit}): {len(base_results)} results")
         
         return base_results
+    def _evaluate_filter_condition(self, actual_value, operator, expected_value):
+        """Evaluate filter condition with type conversion and operator handling"""
+        
+        try:
+            # Convert values to comparable types
+            if isinstance(expected_value, (int, float)) and isinstance(actual_value, str):
+                try:
+                    actual_value = float(actual_value)
+                except ValueError:
+                    return False
+            
+            # Apply operator
+            if operator == "=":
+                return actual_value == expected_value
+            elif operator == "!=":
+                return actual_value != expected_value
+            elif operator == ">":
+                return actual_value > expected_value
+            elif operator == ">=":
+                return actual_value >= expected_value
+            elif operator == "<":
+                return actual_value < expected_value
+            elif operator == "<=":
+                return actual_value <= expected_value
+            elif operator.upper() == "CONTAINS":
+                return str(expected_value) in str(actual_value)
+            elif operator.upper() == "STARTS WITH":
+                return str(actual_value).startswith(str(expected_value))
+            elif operator.upper() == "ENDS WITH":
+                return str(actual_value).endswith(str(expected_value))
+            else:
+                return False
+                
+        except Exception:
+            return False
     
     def _execute_child_operation(self, child_operation, context):
-        """FIXED: Execute child operations with proper filter chain handling"""
-        
-        # The key insight: we need to traverse the ENTIRE operation tree depth-first
-        # to ensure filters are applied in the correct order
+        """COMPLETELY FIXED: Execute child operations with proper filter chain handling"""
         
         print(f"🔧 Executing child operation: {type(child_operation).__name__}")
+        print(f"   Operation type: {getattr(child_operation, 'operation_type', 'None')}")
+        print(f"   Has logical_op: {hasattr(child_operation, 'logical_op') and child_operation.logical_op is not None}")
+        print(f"   Children count: {len(getattr(child_operation, 'children', []))}")
         
-        # STEP 1: First, recursively execute ALL children of this operation
-        base_results = []
+        # THE CRITICAL FIX: First, execute ALL children operations recursively
+        # This ensures we process the ENTIRE operation tree depth-first
+        child_results = []
         for grandchild in getattr(child_operation, 'children', []):
+            print(f"   🔗 Recursively processing grandchild: {type(grandchild).__name__}")
             grandchild_results = self._execute_child_operation(grandchild, context)
-            base_results.extend(grandchild_results)
+            child_results.extend(grandchild_results)
+            print(f"     ↳ Grandchild returned {len(grandchild_results)} results")
         
-        # STEP 2: Then execute THIS operation on the results from children
+        # Then execute THIS operation on the results from children
         if hasattr(child_operation, 'logical_op') and child_operation.logical_op:
             logical_op = child_operation.logical_op
             logical_op_name = type(logical_op).__name__
+            print(f"   🎯 Processing logical operation: {logical_op_name}")
             
             if logical_op_name == "NodeByLabelScan":
-                # Base scan operation - no children to process
-                return self._execute_node_by_label_scan_fixed(logical_op, context)
+                # This is a leaf operation - no children to consider
+                result = self._execute_node_by_label_scan_fixed(logical_op, context)
+                print(f"   ✅ NodeByLabelScan returned {len(result)} results")
+                return result
                 
             elif logical_op_name == "PropertyFilter":
-                # CRITICAL: Apply filter to the base results from children
-                if base_results:
-                    print(f"🔍 Applying PropertyFilter to {len(base_results)} base results")
+                # CRITICAL: Apply filter to the results from children
+                if child_results:
+                    print(f"   🔍 Applying PropertyFilter to {len(child_results)} child results")
                     filtered_results = []
                     
-                    for result in base_results:
+                    for result in child_results:
                         entity = result.get(logical_op.variable)
                         if not entity or not isinstance(entity, dict):
+                            print(f"     ❌ Skipping result - no entity for variable '{logical_op.variable}'")
                             continue
                         
                         property_value = entity.get(logical_op.property_key)
                         if property_value is None:
+                            print(f"     ❌ Skipping {entity.get('name', 'unknown')} - no property '{logical_op.property_key}'")
                             continue
                         
                         if self._evaluate_filter_condition(property_value, logical_op.operator, logical_op.value):
                             filtered_results.append(result)
-                            print(f"✅ Filter passed for {entity.get('name', 'unknown')}")
+                            print(f"     ✅ Filter passed: {entity.get('name', 'unknown')} ({logical_op.property_key}={property_value})")
                         else:
-                            print(f"❌ Filter failed for {entity.get('name', 'unknown')}")
+                            print(f"     ❌ Filter failed: {entity.get('name', 'unknown')} ({logical_op.property_key}={property_value})")
                     
-                    print(f"🎯 Filter result: {len(filtered_results)}/{len(base_results)} passed")
+                    print(f"   🎯 PropertyFilter result: {len(filtered_results)}/{len(child_results)} passed")
                     return filtered_results
                 else:
-                    # No base results, execute the filter's scan operation directly
+                    # No child results, execute the filter's own scan operation
+                    print(f"   🔍 No child results, executing PropertyFilter directly")
                     return self._execute_property_filter_fixed(logical_op, context)
                     
             elif logical_op_name == "Project":
-                # Projection should work on the base results from children
-                return self._apply_projection_to_results(base_results, logical_op)
+                # Apply projection to the results from children
+                print(f"   🎨 Applying projection to {len(child_results)} child results")
+                return self._apply_projection_to_results(child_results, logical_op)
                 
             elif logical_op_name in ["NodeScan", "AllNodeScan", "PropertyScan"]:
-                # Other scan operations
+                # Other leaf scan operations
+                print(f"   📊 Executing scan operation: {logical_op_name}")
                 return self._execute_logical_operation(logical_op, context)
                 
             else:
-                print(f"⚠️  Unknown logical operation: {logical_op_name}")
-                return base_results
+                print(f"   ⚠️  Unknown logical operation: {logical_op_name}, returning child results")
+                return child_results
         
-        # STEP 3: Handle operations without logical_op
+        # Handle operations without logical_op
         elif hasattr(child_operation, 'operation_type'):
             op_type = child_operation.operation_type
+            print(f"   🔧 Processing operation type: {op_type}")
             
             if op_type == "Project":
-                return self._apply_projection_to_results(base_results, child_operation)
+                return self._apply_projection_to_results(child_results, child_operation)
             elif op_type in ["NodeByLabelScan", "PropertyFilter"]:
                 return self._execute_redis_commands_fixed(child_operation, context)
             else:
-                return base_results
+                return child_results
         
-        return base_results
-
+        print(f"   ⚠️  Fallback: returning {len(child_results)} child results")
+        return child_results
     def _apply_projection_to_results(self, base_results, operation):
         """Apply projection to existing results instead of re-executing scans"""
         
