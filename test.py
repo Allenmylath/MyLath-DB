@@ -1,26 +1,27 @@
-# filter_execution_tracer.py - Trace exactly where filters are lost
+# execution_order_test.py - Test to confirm the execution order premise
 
 """
-Filter Execution Tracer
-Detailed tracing to understand exactly where in the execution chain filters are being bypassed
+This test will trace exactly what's happening during query execution
+to confirm whether filters are being bypassed due to execution order issues
 """
 
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
-def trace_filter_execution():
-    """Trace filter execution step by step"""
-    print("🔬 === FILTER EXECUTION TRACER ===\n")
+def test_execution_order_premise():
+    """Test to confirm the premise about execution order"""
+    print("🔬 === EXECUTION ORDER PREMISE TEST ===\n")
     
     from mylathdb import MyLathDB
+    from mylathdb.cypher_planner import parse_cypher_query, LogicalPlanner, PhysicalPlanner
     
     # Setup minimal test case
     db = MyLathDB()
     if db.engine.redis_executor.redis:
         db.engine.redis_executor.redis.flushdb()
     
-    # Load exactly 2 nodes for crystal clear testing
+    # Load exactly 2 nodes for clear testing
     nodes = [
         {'id': '1', 'name': 'Alice', 'age': 30, '_labels': ['Person']},
         {'id': '2', 'name': 'Bob', 'age': 25, '_labels': ['Person']},
@@ -32,118 +33,123 @@ def trace_filter_execution():
     print("   Node 2: Bob, age=25")
     print()
     
-    # Test the problematic query
+    # Parse the problematic query
     query = "MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name"
-    print(f"🧪 Testing: {query}")
+    print(f"🧪 Query: {query}")
     print("Expected: 1 result (Alice only)")
     print()
     
-    # STEP 1: Verify Redis has the right data
-    print("1. 📊 Redis Data Verification:")
-    redis = db.engine.redis_executor.redis
-    print(f"   All Person nodes: {list(redis.smembers('label:Person'))}")
-    print(f"   Nodes with name=Alice: {list(redis.smembers('prop:name:Alice'))}")
-    print(f"   Nodes with name=Bob: {list(redis.smembers('prop:name:Bob'))}")
-    print()
-    
-    # STEP 2: Parse and analyze the plan structure
-    print("2. 🧠 Plan Structure Analysis:")
-    from mylathdb.cypher_planner import parse_cypher_query, LogicalPlanner, PhysicalPlanner
-    
+    # STEP 1: Analyze the plan structure
+    print("1. 📋 Plan Structure Analysis:")
     ast = parse_cypher_query(query)
     logical_planner = LogicalPlanner()
     logical_plan = logical_planner.create_logical_plan(ast)
     physical_planner = PhysicalPlanner()
     physical_plan = physical_planner.create_physical_plan(logical_plan)
     
-    print("   Logical Plan Structure:")
-    print_plan_structure(logical_plan, "     ")
-    
-    print("   Physical Plan Structure:")
-    print_plan_structure(physical_plan, "     ", is_physical=True)
+    print("   Logical Plan:")
+    print_plan_tree(logical_plan, "     ")
     print()
     
-    # STEP 3: Manual execution tracing
-    print("3. 🔧 Manual Execution Tracing:")
-    
-    # Get Redis executor
-    redis_executor = db.engine.redis_executor
-    
-    # Step 3a: Test NodeByLabelScan alone
-    print("   3a. Testing NodeByLabelScan alone:")
-    from mylathdb.execution_engine.engine import ExecutionContext
-    context = ExecutionContext()
-    
-    # Find the NodeByLabelScan operation
-    scan_op = find_operation_by_type(physical_plan, "NodeByLabelScan")
-    if scan_op and scan_op.logical_op:
-        scan_results = redis_executor._execute_node_by_label_scan_fixed(scan_op.logical_op, context)
-        print(f"       Scan results: {len(scan_results)} records")
-        for i, result in enumerate(scan_results):
-            entity = result.get('n', {})
-            print(f"         {i+1}: {entity.get('name', 'Unknown')} (age={entity.get('age', 'Unknown')})")
+    print("   Physical Plan:")
+    print_plan_tree(physical_plan, "     ", is_physical=True)
     print()
     
-    # Step 3b: Test PropertyFilter if it exists
-    print("   3b. Testing PropertyFilter:")
-    filter_op = find_operation_by_type(physical_plan, "PropertyFilter")
-    if filter_op and filter_op.logical_op:
-        print(f"       Found PropertyFilter: {filter_op.logical_op.property_key} {filter_op.logical_op.operator} {filter_op.logical_op.value}")
+    # STEP 2: Trace the actual execution path
+    print("2. 🔍 Execution Path Tracing:")
+    print("   Let's manually trace what should happen vs what actually happens...")
+    
+    # Create an instrumented Redis executor to trace calls
+    original_execute_child = db.engine.redis_executor._execute_child_operation
+    call_trace = []
+    
+    def traced_execute_child(self, child_operation, context):
+        """Instrumented version to trace execution order"""
+        op_name = type(child_operation).__name__
+        op_type = getattr(child_operation, 'operation_type', 'Unknown')
+        logical_type = type(getattr(child_operation, 'logical_op', None)).__name__ if hasattr(child_operation, 'logical_op') and child_operation.logical_op else 'None'
         
-        # Try to execute the filter using the scan results as input
-        print("       Attempting filter execution with scan results as input...")
-        try:
-            # This is where we'll see if the filter logic works
-            filter_results = redis_executor._execute_property_filter_fixed(filter_op.logical_op, context)
-            print(f"       Filter results: {len(filter_results)} records")
-            for i, result in enumerate(filter_results):
-                entity = result.get('n', {})
-                print(f"         {i+1}: {entity.get('name', 'Unknown')} (age={entity.get('age', 'Unknown')})")
-        except Exception as e:
-            print(f"       Filter execution failed: {e}")
-    else:
-        print("       No PropertyFilter found in physical plan!")
-    print()
+        trace_entry = f"{op_name}({op_type}, logical={logical_type})"
+        call_trace.append(trace_entry)
+        print(f"     🔧 Executing: {trace_entry}")
+        
+        # Call the original method
+        result = original_execute_child(child_operation, context)
+        print(f"       ↳ Returned {len(result)} results")
+        
+        return result
     
-    # Step 3c: Test Project operation
-    print("   3c. Testing Project operation:")
-    project_op = find_operation_by_type(physical_plan, "Project")
-    if project_op:
-        print("       Found Project operation")
-        # The project operation should execute its children and then project
-        print("       Project should execute children first, then apply projections")
-    print()
+    # Monkey patch for tracing
+    db.engine.redis_executor._execute_child_operation = traced_execute_child.__get__(db.engine.redis_executor, type(db.engine.redis_executor))
     
-    # STEP 4: Execute the full query and compare
-    print("4. 🚀 Full Query Execution:")
+    # Execute the query
+    print("   Actual execution trace:")
     result = db.execute_query(query)
+    
+    print()
+    print("3. 📊 Execution Results:")
     print(f"   Success: {result.success}")
     print(f"   Result count: {len(result.data)}")
     print(f"   Results: {result.data}")
+    print()
     
-    # STEP 5: Analysis
-    print("\n5. 🎯 Analysis:")
-    if len(result.data) == 1:
-        entity_name = None
-        for record in result.data:
-            if 'n.name' in record:
-                entity_name = record['n.name']
+    print("4. 🔍 Call Trace Analysis:")
+    print("   Execution order was:")
+    for i, call in enumerate(call_trace, 1):
+        print(f"     {i}. {call}")
+    print()
+    
+    # STEP 3: Analyze what went wrong
+    print("5. 🎯 Premise Analysis:")
+    
+    # Check if filter was executed
+    filter_executed = any('PropertyFilter' in call for call in call_trace)
+    scan_executed = any('NodeByLabelScan' in call or 'NodeScan' in call for call in call_trace)
+    project_executed = any('Project' in call for call in call_trace)
+    
+    print(f"   Filter executed: {'✅' if filter_executed else '❌'}")
+    print(f"   Scan executed: {'✅' if scan_executed else '❌'}")
+    print(f"   Project executed: {'✅' if project_executed else '❌'}")
+    print()
+    
+    # Check execution order
+    if len(result.data) == 2:
+        print("   🔍 PREMISE ANALYSIS:")
+        print("   ❌ Filter bypassed - got both Alice and Bob")
         
-        if entity_name == 'Alice':
-            print("   ✅ Filter working correctly - got Alice only")
+        if filter_executed:
+            print("   📋 Filter WAS executed but didn't work correctly")
+            print("   💡 Issue: Filter may be executing on wrong data or in wrong order")
         else:
-            print(f"   ⚠️  Got 1 result but wrong entity: {entity_name}")
-    elif len(result.data) == 2:
-        print("   ❌ Filter NOT working - got both Alice and Bob")
-        print("   🔍 This confirms filters are being bypassed")
-    elif len(result.data) == 0:
-        print("   ⚠️  Over-filtering - got no results")
+            print("   📋 Filter was NOT executed at all")
+            print("   💡 Issue: Filter is being skipped in execution path")
+        
+        print()
+        print("   🎯 CONFIRMED PREMISE:")
+        print("   The execution order is incorrect - filters are not being applied")
+        print("   before projection gets the full scan results.")
+        
+        return False
+        
+    elif len(result.data) == 1 and result.data[0].get('n.name') == 'Alice':
+        print("   ✅ PREMISE INCORRECT:")
+        print("   Filter is working correctly - got Alice only")
+        print("   The issue may be somewhere else in the codebase")
+        
+        return True
+        
     else:
-        print(f"   ⚠️  Unexpected result count: {len(result.data)}")
+        print("   ⚠️  UNEXPECTED RESULT:")
+        print(f"   Got {len(result.data)} results, expected 1 or 2")
+        print("   Need to investigate further")
+        
+        return None
 
-
-def print_plan_structure(op, prefix="", is_physical=False):
-    """Print plan structure with details"""
+def print_plan_tree(op, prefix="", is_physical=False):
+    """Print plan tree structure"""
+    if not op:
+        return
+        
     op_name = type(op).__name__
     details = []
     
@@ -151,8 +157,20 @@ def print_plan_structure(op, prefix="", is_physical=False):
         if hasattr(op, 'operation_type'):
             details.append(f"type={op.operation_type}")
         if hasattr(op, 'logical_op') and op.logical_op:
-            details.append(f"logical={type(op.logical_op).__name__}")
+            logical_name = type(op.logical_op).__name__
+            details.append(f"logical={logical_name}")
+            
+            # Add logical operation details
+            if hasattr(op.logical_op, 'variable'):
+                details.append(f"var={op.logical_op.variable}")
+            if hasattr(op.logical_op, 'property_key'):
+                details.append(f"prop={op.logical_op.property_key}")
+            if hasattr(op.logical_op, 'operator'):
+                details.append(f"op={op.logical_op.operator}")
+            if hasattr(op.logical_op, 'value'):
+                details.append(f"val={op.logical_op.value}")
     else:
+        # Logical plan details
         if hasattr(op, 'variable'):
             details.append(f"var={op.variable}")
         if hasattr(op, 'property_key'):
@@ -161,83 +179,129 @@ def print_plan_structure(op, prefix="", is_physical=False):
             details.append(f"op={op.operator}")
         if hasattr(op, 'value'):
             details.append(f"val={op.value}")
+        if hasattr(op, 'projections'):
+            details.append(f"proj={len(op.projections)}")
     
     detail_str = f" ({', '.join(details)})" if details else ""
     print(f"{prefix}{op_name}{detail_str}")
     
-    for child in getattr(op, 'children', []):
-        print_plan_structure(child, prefix + "  ", is_physical)
+    # Print children
+    children = getattr(op, 'children', [])
+    for child in children:
+        print_plan_tree(child, prefix + "  ", is_physical)
 
-
-def find_operation_by_type(plan, operation_type):
-    """Find operation by type in plan tree"""
-    if hasattr(plan, 'operation_type') and plan.operation_type == operation_type:
-        return plan
-    
-    for child in getattr(plan, 'children', []):
-        result = find_operation_by_type(child, operation_type)
-        if result:
-            return result
-    
-    return None
-
-
-def test_multiple_filter_scenarios():
-    """Test multiple filter scenarios to establish patterns"""
-    print("🧪 === MULTIPLE FILTER SCENARIO TESTING ===\n")
-    
-    scenarios = [
-        ("String equality", "MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name", 1),
-        ("Number equality", "MATCH (n:Person) WHERE n.age = 30 RETURN n.name", 1),
-        ("Number range", "MATCH (n:Person) WHERE n.age > 25 RETURN n.name", 1),
-        ("No filter baseline", "MATCH (n:Person) RETURN n.name", 2),
-    ]
+def test_individual_operations():
+    """Test individual operations to see which ones work correctly"""
+    print("🔧 === INDIVIDUAL OPERATION TEST ===\n")
     
     from mylathdb import MyLathDB
+    from mylathdb.execution_engine.engine import ExecutionContext
     
-    for scenario_name, query, expected_count in scenarios:
-        print(f"🔬 Testing: {scenario_name}")
-        print(f"   Query: {query}")
-        print(f"   Expected count: {expected_count}")
-        
-        # Fresh setup for each test
-        db = MyLathDB()
-        if db.engine.redis_executor.redis:
-            db.engine.redis_executor.redis.flushdb()
-        
-        nodes = [
-            {'id': '1', 'name': 'Alice', 'age': 30, '_labels': ['Person']},
-            {'id': '2', 'name': 'Bob', 'age': 25, '_labels': ['Person']},
-        ]
-        db.load_graph_data(nodes=nodes)
-        
-        # Execute
-        result = db.execute_query(query)
-        actual_count = len(result.data)
-        
-        print(f"   Actual count: {actual_count}")
-        print(f"   Match: {'✅' if actual_count == expected_count else '❌'}")
-        
-        if actual_count != expected_count:
-            print(f"   Results: {result.data}")
-        
-        print()
-
+    # Setup
+    db = MyLathDB()
+    if db.engine.redis_executor.redis:
+        db.engine.redis_executor.redis.flushdb()
+    
+    nodes = [
+        {'id': '1', 'name': 'Alice', 'age': 30, '_labels': ['Person']},
+        {'id': '2', 'name': 'Bob', 'age': 25, '_labels': ['Person']},
+    ]
+    db.load_graph_data(nodes=nodes)
+    
+    context = ExecutionContext()
+    redis_executor = db.engine.redis_executor
+    
+    print("Testing individual operations in isolation:")
+    print()
+    
+    # Test 1: NodeByLabelScan alone
+    print("1. 🔍 NodeByLabelScan Test:")
+    from mylathdb.cypher_planner.logical_operators import NodeByLabelScan
+    scan_op = NodeByLabelScan('n', 'Person')
+    scan_results = redis_executor._execute_node_by_label_scan_fixed(scan_op, context)
+    print(f"   Results: {len(scan_results)} nodes")
+    for i, result in enumerate(scan_results):
+        entity = result.get('n', {})
+        print(f"     {i+1}: {entity.get('name', 'Unknown')} (age={entity.get('age', 'Unknown')})")
+    print()
+    
+    # Test 2: PropertyFilter alone
+    print("2. 🔍 PropertyFilter Test:")
+    from mylathdb.cypher_planner.logical_operators import PropertyFilter
+    filter_op = PropertyFilter('n', 'name', '=', 'Alice')
+    filter_results = redis_executor._execute_property_filter_fixed(filter_op, context)
+    print(f"   Results: {len(filter_results)} nodes")
+    for i, result in enumerate(filter_results):
+        entity = result.get('n', {})
+        print(f"     {i+1}: {entity.get('name', 'Unknown')} (age={entity.get('age', 'Unknown')})")
+    print()
+    
+    # Test 3: Manual filter application
+    print("3. 🔍 Manual Filter Application Test:")
+    print("   Applying filter manually to scan results:")
+    
+    filtered_manual = []
+    for result in scan_results:
+        entity = result.get('n', {})
+        if entity.get('name') == 'Alice':
+            filtered_manual.append(result)
+            print(f"     ✅ {entity.get('name')} passed filter")
+        else:
+            print(f"     ❌ {entity.get('name')} failed filter")
+    
+    print(f"   Manual filter result: {len(filtered_manual)} nodes")
+    print()
+    
+    # Analysis
+    print("4. 🎯 Analysis:")
+    if len(scan_results) == 2:
+        print("   ✅ NodeByLabelScan works correctly")
+    else:
+        print("   ❌ NodeByLabelScan not working")
+    
+    if len(filter_results) == 1:
+        print("   ✅ PropertyFilter works correctly when called directly")
+    else:
+        print("   ❌ PropertyFilter not working when called directly")
+    
+    if len(filtered_manual) == 1:
+        print("   ✅ Manual filter application works")
+        print("   💡 Issue is likely in the execution flow, not the filter logic")
+    else:
+        print("   ❌ Even manual filtering fails")
+        print("   💡 Issue is in the filter logic itself")
 
 def main():
-    """Run comprehensive filter tracing"""
-    print("🎯 === COMPREHENSIVE FILTER TRACING ===\n")
+    """Run premise confirmation tests"""
+    print("🚀 === PREMISE CONFIRMATION TEST SUITE ===\n")
     
-    # Detailed execution tracing
-    trace_filter_execution()
+    # Test 1: Execution order premise
+    premise_confirmed = test_execution_order_premise()
     
-    print("\n" + "="*80 + "\n")
+    print("\n" + "="*60 + "\n")
     
-    # Multiple scenario testing
-    test_multiple_filter_scenarios()
+    # Test 2: Individual operations
+    test_individual_operations()
     
-    print("🎯 === TRACING COMPLETE ===")
-
+    print("\n" + "="*60 + "\n")
+    
+    # Summary
+    print("🎯 === PREMISE CONFIRMATION SUMMARY ===")
+    
+    if premise_confirmed is False:
+        print("✅ PREMISE CONFIRMED!")
+        print("🔍 The issue IS execution order - filters are being bypassed")
+        print("💡 The fix should focus on correcting the execution flow")
+        print("📋 Next: Implement the execution order fix")
+    elif premise_confirmed is True:
+        print("❌ PREMISE INCORRECT!")
+        print("🔍 Filters are actually working correctly")
+        print("💡 The issue is elsewhere - need to investigate further")
+        print("📋 Next: Look for other causes of the filter bypass")
+    else:
+        print("⚠️  PREMISE UNCLEAR!")
+        print("🔍 Results are unexpected - need more investigation")
+        print("📋 Next: Debug individual components more thoroughly")
 
 if __name__ == "__main__":
     main()
