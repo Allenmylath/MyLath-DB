@@ -1031,7 +1031,12 @@ class RedisExecutor:
         
         logger.debug(f"Retrieved complete node data for {node_id}: {result}")
         return result
-    
+    def _get_node_data(self, node_id: str) -> Optional[Dict[str, Any]]:
+        """
+        FIXED: Get node data - alias for _get_node_data_complete
+        This method is required by DataBridge but was missing
+        """
+        return self._get_node_data_complete(node_id)
     def execute_generic_operation(self, physical_plan, context) -> List[Dict[str, Any]]:
         """FIXED: Execute generic physical operation using Redis"""
         

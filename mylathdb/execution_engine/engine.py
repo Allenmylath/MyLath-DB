@@ -150,8 +150,7 @@ class ExecutionEngine:
         context = ExecutionContext(
             parameters=parameters or {},
             graph_data=graph_data,
-            max_execution_time=kwargs.get('max_execution_time', self.config.MAX_EXECUTION_TIME),
-            enable_parallel=kwargs.get('enable_parallel', True),
+            max_execution_time=kwargs.get('max_execution_time', getattr(self.config, 'MAX_EXECUTION_TIME', 300.0)),            enable_parallel=kwargs.get('enable_parallel', True),
             cache_results=kwargs.get('cache_results', self.config.ENABLE_CACHING)
         )
         

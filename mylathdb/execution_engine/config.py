@@ -37,7 +37,7 @@ class MyLathDBExecutionConfig:
     BATCH_SIZE: int = field(default_factory=lambda: int(os.getenv('MYLATH_BATCH_SIZE', '1000')))
     MAX_MEMORY_USAGE: str = field(default_factory=lambda: os.getenv('MYLATH_MAX_MEMORY', '2GB'))
     QUERY_TIMEOUT: float = field(default_factory=lambda: float(os.getenv('MYLATH_QUERY_TIMEOUT', '300.0')))
-    
+    MAX_EXECUTION_TIME: float = field(default_factory=lambda: float(os.getenv('MYLATH_MAX_EXECUTION_TIME', '300.0')))  # ADD THIS LINE
     # Logging and Debug
     LOG_LEVEL: str = field(default_factory=lambda: os.getenv('MYLATH_LOG_LEVEL', 'INFO'))
     ENABLE_QUERY_LOGGING: bool = field(default_factory=lambda: os.getenv('MYLATH_QUERY_LOG', 'false').lower() == 'true')

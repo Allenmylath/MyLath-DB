@@ -342,12 +342,16 @@ class DataBridge:
                 logger.warning(f"Failed to process edge {edge_id}: {e}")
     
     def _set_matrix_entry(self, matrix, row: int, col: int, value: bool):
-        """Safely set matrix entry with bounds checking"""
+        """FIXED: Safely set matrix entry with proper GraphBLAS handling"""
         try:
-            if matrix and row < matrix.nrows and col < matrix.ncols:
-                matrix[row, col] = value
+            # FIXED: Check matrix existence without boolean conversion
+            if matrix is not None and hasattr(matrix, 'nrows') and hasattr(matrix, 'ncols'):
+                if row < matrix.nrows and col < matrix.ncols:
+                    matrix[row, col] = value
+                    return True
         except Exception as e:
             logger.warning(f"Failed to set matrix entry [{row}, {col}]: {e}")
+        return False
     
     def _sync_pending_nodes(self, node_ids: Set[str]):
         """Sync specific pending node updates"""
