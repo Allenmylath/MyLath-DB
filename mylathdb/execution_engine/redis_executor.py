@@ -224,6 +224,8 @@ class RedisExecutor:
             return self._execute_node_scan_fixed(logical_op, context)
         elif operation_type == "PropertyFilter" and logical_op:
             return self._execute_property_filter_fixed(logical_op, context)
+        elif operation_type == "Filter":
+            return self._execute_generic_filter_operation(redis_operation, context)
         elif operation_type == "Project":
             return self._execute_project_operation_final(redis_operation, context)
         elif operation_type == "OrderBy":
@@ -789,7 +791,7 @@ class RedisExecutor:
         return results
     
     def _execute_property_filter_fixed(self, logical_op, context) -> List[Dict[str, Any]]:
-        """FIXED: Execute PropertyFilter operation"""
+        """FIXED: Execute PropertyFilter with full range operator support"""
         
         logger.debug(f"PropertyFilter for variable '{logical_op.variable}' where {logical_op.property_key} {logical_op.operator} {logical_op.value}")
         
@@ -803,6 +805,9 @@ class RedisExecutor:
                 value=logical_op.value
             )
             node_ids = self.redis.smembers(prop_key)
+        elif logical_op.operator == '!=':
+            # For inequality, get all nodes and subtract equal ones
+            node_ids = self._execute_inequality_filter(logical_op)
         else:
             # For other operators, scan all nodes
             node_ids = self._scan_all_nodes_for_property_filter_fixed(logical_op)
@@ -812,12 +817,28 @@ class RedisExecutor:
         for node_id in node_ids:
             node_data = self._get_node_data_complete(node_id)
             if node_data:
-                # Format result with variable name as key
                 result_record = {logical_op.variable: node_data}
                 results.append(result_record)
         
         logger.debug(f"PropertyFilter returned {len(results)} results")
         return results
+    def _execute_inequality_filter(self, logical_op) -> Set[str]:
+        """Execute != filter by getting all nodes except those with the value"""
+        
+        # Get all nodes with this property
+        all_with_prop = set()
+        for key in self.redis.scan_iter(match=f"prop:{logical_op.property_key}:*"):
+            all_with_prop.update(self.redis.smembers(key))
+        
+        # Get nodes with the specific value to exclude
+        exclude_key = self.storage.PROPERTY_INDEX_KEY.format(
+            property=logical_op.property_key,
+            value=logical_op.value
+        )
+        exclude_nodes = self.redis.smembers(exclude_key)
+        
+        # Return all except the excluded ones
+        return all_with_prop - set(exclude_nodes)
     
     def _execute_range_property_filter_fixed(self, logical_op) -> Set[str]:
         """FIXED: Execute range-based property filter using sorted sets"""
@@ -1394,3 +1415,65 @@ class RedisExecutor:
             import traceback
             traceback.print_exc()
             return False
+    def _execute_generic_filter_operation(self, operation, context) -> List[Dict[str, Any]]:
+        """Execute generic filter operation by applying it to child results"""
+        
+        # Get base results from children
+        base_results = []
+        for child in operation.children:
+            child_results = self._execute_child_operation(child, context)
+            base_results.extend(child_results)
+        
+        # Get filter condition from logical operation
+        logical_op = getattr(operation, 'logical_op', None)
+        if not logical_op or not hasattr(logical_op, 'condition'):
+            return base_results
+        
+        # Apply filter condition to each result
+        filtered_results = []
+        for result in base_results:
+            if self._evaluate_filter_condition_on_result(logical_op.condition, result):
+                filtered_results.append(result)
+        
+        return filtered_results
+
+    def _evaluate_filter_condition_on_result(self, condition, result) -> bool:
+        """Evaluate filter condition against a result record"""
+        
+        from ..cypher_planner.ast_nodes import (
+            BinaryExpression, PropertyExpression, LiteralExpression, VariableExpression
+        )
+        
+        if isinstance(condition, BinaryExpression):
+            if condition.operator.upper() == "AND":
+                left_result = self._evaluate_filter_condition_on_result(condition.left, result)
+                right_result = self._evaluate_filter_condition_on_result(condition.right, result)
+                return left_result and right_result
+            elif condition.operator.upper() == "OR":
+                left_result = self._evaluate_filter_condition_on_result(condition.left, result)
+                right_result = self._evaluate_filter_condition_on_result(condition.right, result)
+                return left_result or right_result
+            else:
+                # Property comparison
+                left_val = self._evaluate_expression_in_result(condition.left, result)
+                right_val = self._evaluate_expression_in_result(condition.right, result)
+                return self._evaluate_filter_condition(left_val, condition.operator, right_val)
+        
+        return True
+
+    def _evaluate_expression_in_result(self, expr, result):
+        """Evaluate expression against result record"""
+        
+        from ..cypher_planner.ast_nodes import PropertyExpression, LiteralExpression, VariableExpression
+        
+        if isinstance(expr, PropertyExpression):
+            entity = result.get(expr.variable)
+            if entity and isinstance(entity, dict):
+                return entity.get(expr.property_name)
+            return None
+        elif isinstance(expr, LiteralExpression):
+            return expr.value
+        elif isinstance(expr, VariableExpression):
+            return result.get(expr.name)
+        else:
+            return None

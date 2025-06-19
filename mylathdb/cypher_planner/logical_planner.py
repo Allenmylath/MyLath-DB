@@ -388,55 +388,29 @@ class LogicalPlanner:
         return variables
 
     def _add_filter_operations(self, plan: LogicalOperator, where_clause: WhereClause) -> LogicalOperator:
-        """Add filter operations using new filter types"""
+        """FIXED: Add filter operations with proper decomposition"""
         
         if not plan or not where_clause:
             return plan
             
         try:
-            filter_type = self._determine_filter_type(where_clause.condition)
+            # Decompose complex conditions into multiple filters
+            filter_conditions = self._decompose_filter_condition(where_clause.condition)
             
-            # Create appropriate filter operation
-            if filter_type == "property" and isinstance(where_clause.condition, BinaryExpression):
-                if isinstance(where_clause.condition.left, PropertyExpression):
-                    try:
-                        prop_expr = where_clause.condition.left
-                        filter_op = PropertyFilter(
-                            prop_expr.variable,
-                            prop_expr.property_name,
-                            where_clause.condition.operator,
-                            where_clause.condition.right.value
-                        )
-                    except Exception as e:
-                        print(f"Warning: Could not create PropertyFilter: {e}")
-                        filter_op = Filter(where_clause.condition, filter_type)
-                else:
-                    filter_op = Filter(where_clause.condition, filter_type)
-            elif filter_type == "structural":
-                try:
-                    filter_op = StructuralFilter(where_clause.condition)
-                except Exception as e:
-                    print(f"Warning: Could not create StructuralFilter: {e}")
-                    filter_op = Filter(where_clause.condition, filter_type)
-            elif filter_type == "path":
-                try:
-                    filter_op = PathFilter(str(where_clause.condition))
-                except Exception as e:
-                    print(f"Warning: Could not create PathFilter: {e}")
-                    filter_op = Filter(where_clause.condition, filter_type)
-            else:
-                filter_op = Filter(where_clause.condition, filter_type)
-            
-            # FIXED: Set logical_op reference for filter operations
-            filter_op.logical_op = filter_op
-            
-            # Safely add child
-            if hasattr(filter_op, 'add_child'):
-                filter_op.add_child(plan)
-            else:
-                filter_op.children = [plan]
+            current_plan = plan
+            for condition in filter_conditions:
+                filter_op = self._create_filter_from_condition(condition)
+                filter_op.logical_op = filter_op
                 
-            return filter_op
+                if hasattr(filter_op, 'add_child'):
+                    filter_op.add_child(current_plan)
+                else:
+                    filter_op.children = [current_plan]
+                
+                current_plan = filter_op
+            
+            return current_plan
+            
         except Exception as e:
             print(f"Warning: Could not add filter operations: {e}")
             return plan
@@ -457,3 +431,33 @@ class LogicalPlanner:
             print(f"Warning: Could not determine filter type: {e}")
         
         return "general"
+    def _decompose_filter_condition(self, condition: Expression) -> List[Expression]:
+        """Decompose complex filter conditions into simple ones"""
+        
+        if isinstance(condition, BinaryExpression) and condition.operator.upper() == "AND":
+            # Split AND conditions recursively
+            left_conditions = self._decompose_filter_condition(condition.left)
+            right_conditions = self._decompose_filter_condition(condition.right)
+            return left_conditions + right_conditions
+        else:
+            # Simple condition - return as-is
+            return [condition]
+
+    def _create_filter_from_condition(self, condition: Expression) -> LogicalOperator:
+        """Create appropriate filter operation from condition"""
+        
+        if isinstance(condition, BinaryExpression) and isinstance(condition.left, PropertyExpression):
+            # Property-based filter
+            prop_expr = condition.left
+            operator = condition.operator
+            value = condition.right.value if hasattr(condition.right, 'value') else condition.right
+            
+            return PropertyFilter(
+                prop_expr.variable,
+                prop_expr.property_name, 
+                operator,
+                value
+            )
+        else:
+            # Generic filter fallback
+            return Filter(condition, "general")
