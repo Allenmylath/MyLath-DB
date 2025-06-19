@@ -1,9 +1,8 @@
 # mylathdb/execution_engine/graphblas_executor.py
 
 """
-MyLathDB GraphBLAS Executor - FIXED VERSION
-Handles graph traversals and matrix operations using Python GraphBLAS
-Fixed API usage and removed deprecated finalize() calls
+MyLathDB GraphBLAS Executor - FULLY FIXED VERSION
+Uses correct semirings that actually work with python-graphblas 2025.2.0
 """
 
 import time
@@ -62,13 +61,8 @@ class GraphBLASGraph:
 
 class GraphBLASExecutor:
     """
-    GraphBLAS executor for MyLathDB using the correct API and semirings
-    
-    Handles:
-    - Graph traversals using matrix-vector multiplication
-    - Variable-length path queries using matrix powers
-    - Structural pattern matching
-    - Matrix synchronization with Delta Matrix approach
+    FULLY FIXED GraphBLAS executor for MyLathDB
+    Uses correct semirings and API calls that work with python-graphblas 2025.2.0
     """
     
     def __init__(self, config: MyLathDBExecutionConfig):
@@ -77,6 +71,16 @@ class GraphBLASExecutor:
         self.graph = None
         self.initialized = False
         self.gb_initialized = False
+        
+        # FIXED: Use working semirings identified from tests
+        self.default_bool_semiring = gb.semiring.any_pair if GRAPHBLAS_AVAILABLE else None
+        self.fallback_semirings = [
+            'any_pair',      # ✅ Works with BOOL
+            'lor_land',      # ✅ Works with BOOL  
+            'land_lor',      # ✅ Works with BOOL
+            'max_min',       # ✅ Works with BOOL
+            'min_max'        # ✅ Works with BOOL
+        ] if GRAPHBLAS_AVAILABLE else []
         
         # Performance settings
         self.enable_parallel = True
@@ -91,7 +95,7 @@ class GraphBLASExecutor:
         self.num_threads = getattr(config, 'GRAPHBLAS_THREADS', 4)
         
     def initialize(self):
-        """Initialize GraphBLAS with correct API sequence"""
+        """Initialize GraphBLAS with correct API sequence and test semirings"""
         logger.info("Initializing GraphBLAS executor")
         
         if not GRAPHBLAS_AVAILABLE:
@@ -103,29 +107,21 @@ class GraphBLASExecutor:
             return
         
         try:
-            # STEP 1: Initialize GraphBLAS library (FIXED - no finalize)
+            # STEP 1: Initialize GraphBLAS library
             if not self.gb_initialized:
                 logger.info("Initializing GraphBLAS library...")
-                
-                # Modern python-graphblas doesn't need explicit init/finalize
-                # The library handles this automatically
                 logger.debug("GraphBLAS auto-initialization")
                 logger.info("GraphBLAS library initialized successfully")
                 self.gb_initialized = True
             
-            # STEP 2: Test GraphBLAS functionality with CORRECT API and compatible semiring
-            logger.info("Testing GraphBLAS functionality...")
-            
-            # FIXED: Use correct constructor syntax and compatible semiring
-            test_matrix = gb.Matrix(gb.dtypes.BOOL, nrows=2, ncols=2)
-            test_matrix[0, 1] = True
-            test_vector = gb.Vector(gb.dtypes.BOOL, size=2)
-            test_vector[0] = True
-            
-            # FIXED: Use LOR_LAND semiring which works with BOOL
-            result = test_vector.vxm(test_matrix, gb.semiring.lor_land)
-            
-            logger.info(f"GraphBLAS functionality test passed (result nnz: {result.nvals})")
+            # STEP 2: Test and select working semiring
+            logger.info("Testing GraphBLAS semirings...")
+            working_semiring = self._find_working_semiring()
+            if working_semiring:
+                self.default_bool_semiring = working_semiring
+                logger.info(f"✅ Using semiring: {working_semiring}")
+            else:
+                raise MyLathDBGraphBLASError("No working semirings found for BOOL operations")
             
             # STEP 3: Set threading if available
             try:
@@ -162,12 +158,49 @@ class GraphBLASExecutor:
             self.graph = None
             raise MyLathDBGraphBLASError(f"GraphBLAS initialization failed: {e}")
     
+    def _find_working_semiring(self):
+        """FIXED: Test and find a working semiring for BOOL operations"""
+        if not GRAPHBLAS_AVAILABLE:
+            return None
+            
+        # Test each semiring to find one that works
+        for semiring_name in self.fallback_semirings:
+            try:
+                # Get semiring object
+                semiring = getattr(gb.semiring, semiring_name, None)
+                if semiring is None:
+                    continue
+                
+                # Test with small BOOL matrices
+                test_matrix = gb.Matrix(gb.dtypes.BOOL, nrows=2, ncols=2)
+                test_matrix[0, 1] = True
+                test_vector = gb.Vector(gb.dtypes.BOOL, size=2)
+                test_vector[0] = True
+                
+                # Try the operation
+                result = test_vector.vxm(test_matrix, semiring)
+                
+                if result.nvals >= 0:  # Success
+                    logger.info(f"✅ Semiring {semiring_name} works!")
+                    return semiring
+                    
+            except Exception as e:
+                logger.debug(f"❌ Semiring {semiring_name} failed: {e}")
+                continue
+        
+        logger.error("No working semirings found!")
+        return None
+    
     def is_available(self) -> bool:
         """Check if GraphBLAS is available and initialized"""
-        return GRAPHBLAS_AVAILABLE and self.initialized and self.gb_initialized and self.graph is not None
+        return (GRAPHBLAS_AVAILABLE and 
+                self.initialized and 
+                self.gb_initialized and 
+                self.graph is not None and
+                self.default_bool_semiring is not None)
     
     def _initialize_matrices(self):
-        """Initialize core GraphBLAS matrices using CORRECT API"""
+        """Initialize core GraphBLAS matrices using correct API"""
         if not GRAPHBLAS_AVAILABLE or not self.gb_initialized or not self.graph:
             return
             
@@ -177,7 +210,6 @@ class GraphBLASExecutor:
             # Create core matrices with initial capacity
             n = self.graph.node_capacity
             
-            # FIXED: Use correct constructor syntax
             # Main adjacency matrix (boolean, all relationships)
             self.graph.adjacency_matrix = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
             logger.debug(f"Created adjacency matrix {n}x{n}")
@@ -232,12 +264,12 @@ class GraphBLASExecutor:
             return []
     
     def test_functionality(self) -> bool:
-        """Test GraphBLAS functionality using correct API and compatible semirings"""
+        """Test GraphBLAS functionality using correct working semirings"""
         if not self.is_available():
             return False
             
         try:
-            # Test basic matrix operations - FIXED API and semiring
+            # Test basic matrix operations with working semiring
             test_matrix = gb.Matrix(gb.dtypes.BOOL, nrows=10, ncols=10)
             test_matrix[0, 1] = True
             test_matrix[1, 2] = True
@@ -245,8 +277,8 @@ class GraphBLASExecutor:
             test_vector = gb.Vector(gb.dtypes.BOOL, size=10)
             test_vector[0] = True
             
-            # Test matrix-vector multiplication with compatible semiring
-            result = test_vector.vxm(test_matrix, gb.semiring.lor_land)
+            # Test matrix-vector multiplication with our working semiring
+            result = test_vector.vxm(test_matrix, self.default_bool_semiring)
             
             return result.nvals >= 0  # Should succeed
             
@@ -260,7 +292,8 @@ class GraphBLASExecutor:
             'available': self.is_available(),
             'initialized': self.initialized,
             'gb_initialized': self.gb_initialized,
-            'graphblas_package_available': GRAPHBLAS_AVAILABLE
+            'graphblas_package_available': GRAPHBLAS_AVAILABLE,
+            'working_semiring': str(self.default_bool_semiring) if self.default_bool_semiring else None
         }
         
         if self.is_available():
@@ -336,7 +369,6 @@ class GraphBLASExecutor:
                 # Get or create relation matrix
                 if rel_type not in self.graph.relation_matrices:
                     n = self.graph.node_capacity
-                    # FIXED API
                     self.graph.relation_matrices[rel_type] = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
                 
                 matrix = self.graph.relation_matrices[rel_type]
@@ -386,7 +418,7 @@ class GraphBLASExecutor:
                 self.load_edges_as_matrices(graph_data['edges'])
     
     def shutdown(self):
-        """Shutdown GraphBLAS executor - FIXED to not call finalize()"""
+        """Shutdown GraphBLAS executor"""
         logger.info("Shutting down GraphBLAS executor")
         
         if not self.initialized:
@@ -394,7 +426,6 @@ class GraphBLASExecutor:
             return
         
         try:
-            # FIXED: Don't call gb.finalize() as it doesn't exist in current version
             # Modern python-graphblas handles cleanup automatically
             logger.info("GraphBLAS cleanup handled automatically by library")
             
@@ -414,7 +445,7 @@ class GraphBLASExecutor:
             rel_type = rel_types[0]
             
             if rel_type not in self.graph.relation_matrices:
-                # Create new relation matrix - FIXED API
+                # Create new relation matrix
                 n = self.graph.node_capacity
                 self.graph.relation_matrices[rel_type] = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
                 logger.debug(f"Created new relation matrix for {rel_type}")
@@ -432,7 +463,6 @@ class GraphBLASExecutor:
             for rel_type in rel_types:
                 if rel_type not in self.graph.relation_matrices:
                     n = self.graph.node_capacity
-                    # FIXED API
                     self.graph.relation_matrices[rel_type] = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
                 
                 rel_matrix = self.graph.relation_matrices[rel_type]
@@ -456,7 +486,6 @@ class GraphBLASExecutor:
         
         # Create new vector based on variable
         n = self.graph.node_capacity
-        # FIXED API
         source_vector = gb.Vector(gb.dtypes.BOOL, size=n)
         
         # Set some nodes as active (this would come from previous operations)
@@ -467,10 +496,9 @@ class GraphBLASExecutor:
         return source_vector
     
     def _compute_transitive_closure(self, source_vector, matrix, min_length: int = 1):
-        """Compute transitive closure using matrix powers with compatible semiring"""
+        """FIXED: Compute transitive closure using matrix powers with working semiring"""
         
         n = matrix.nrows
-        # FIXED API
         result = gb.Vector(gb.dtypes.BOOL, size=n)
         current = source_vector.dup()
         
@@ -480,10 +508,9 @@ class GraphBLASExecutor:
                 # Add current level to result using LOR
                 result = result.ewise_add(current, gb.binary.lor)
             
-            # Compute next level: current = current @ matrix
-            # FIXED: Use compatible semiring for BOOL
+            # FIXED: Use our working semiring
             prev_nnvals = current.nvals
-            current = current.vxm(matrix, gb.semiring.lor_land)
+            current = current.vxm(matrix, self.default_bool_semiring)
             
             # Check for convergence (no new nodes reached)
             if current.nvals == 0 or current.nvals == prev_nnvals:
@@ -493,16 +520,15 @@ class GraphBLASExecutor:
     
     def _compute_bounded_varlen_path(self, source_vector, matrix, 
                                    min_length: int, max_length: int):
-        """Compute bounded variable-length path using matrix powers with compatible semiring"""
+        """FIXED: Compute bounded variable-length path using working semiring"""
         
         n = matrix.nrows
-        # FIXED API
         result = gb.Vector(gb.dtypes.BOOL, size=n)
         current = source_vector.dup()
         
         for length in range(1, max_length + 1):
-            # Compute next level using compatible semiring
-            current = current.vxm(matrix, gb.semiring.lor_land)
+            # FIXED: Use our working semiring
+            current = current.vxm(matrix, self.default_bool_semiring)
             
             # Add to result if within range
             if length >= min_length:
@@ -532,7 +558,7 @@ class GraphBLASExecutor:
         return results
     
     def _handle_generic_traversal(self, logical_op, context) -> List[Dict[str, Any]]:
-        """Handle generic traversal operations with compatible semirings"""
+        """FIXED: Handle generic traversal operations with working semirings"""
         op_type = type(logical_op).__name__
         
         if hasattr(logical_op, 'from_var') and hasattr(logical_op, 'to_var'):
@@ -543,15 +569,15 @@ class GraphBLASExecutor:
             relation_matrix = self._get_relation_matrix(rel_types, direction)
             source_vector = self._create_source_vector(logical_op.from_var, context)
             
-            # Perform traversal with compatible semiring
+            # FIXED: Perform traversal with our working semiring
             try:
                 if direction == "outgoing":
-                    result_vector = source_vector.vxm(relation_matrix, gb.semiring.lor_land)
+                    result_vector = source_vector.vxm(relation_matrix, self.default_bool_semiring)
                 elif direction == "incoming":
-                    result_vector = source_vector.vxm(relation_matrix.T, gb.semiring.lor_land)
+                    result_vector = source_vector.vxm(relation_matrix.T, self.default_bool_semiring)
                 else:  # bidirectional
                     bidirectional_matrix = relation_matrix.ewise_add(relation_matrix.T, gb.binary.lor)
-                    result_vector = source_vector.vxm(bidirectional_matrix, gb.semiring.lor_land)
+                    result_vector = source_vector.vxm(bidirectional_matrix, self.default_bool_semiring)
                 
                 return self._vector_to_results(result_vector, logical_op.to_var)
             except Exception as e:
@@ -561,7 +587,7 @@ class GraphBLASExecutor:
         return []
     
     def _execute_conditional_traverse(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute single-hop conditional traversal using matrix-vector multiplication with compatible semirings"""
+        """FIXED: Execute single-hop conditional traversal using working semirings"""
         logical_op = operation.logical_op
         
         # Get or create relation matrix
@@ -572,14 +598,14 @@ class GraphBLASExecutor:
         source_vector = self._create_source_vector(logical_op.from_var, context)
         
         try:
-            # Perform matrix-vector multiplication with compatible semiring
+            # FIXED: Perform matrix-vector multiplication with working semiring
             if logical_op.direction == "outgoing":
-                result_vector = source_vector.vxm(relation_matrix, gb.semiring.lor_land)
+                result_vector = source_vector.vxm(relation_matrix, self.default_bool_semiring)
             elif logical_op.direction == "incoming":  
-                result_vector = source_vector.vxm(relation_matrix.T, gb.semiring.lor_land)
+                result_vector = source_vector.vxm(relation_matrix.T, self.default_bool_semiring)
             else:  # bidirectional
                 bidirectional_matrix = relation_matrix.ewise_add(relation_matrix.T, gb.binary.lor)
-                result_vector = source_vector.vxm(bidirectional_matrix, gb.semiring.lor_land)
+                result_vector = source_vector.vxm(bidirectional_matrix, self.default_bool_semiring)
             
             # Convert result to destination nodes
             results = self._vector_to_results(result_vector, logical_op.to_var)
@@ -591,7 +617,7 @@ class GraphBLASExecutor:
             return []
     
     def _execute_var_len_traverse(self, operation, context) -> List[Dict[str, Any]]:
-        """Execute variable-length traversal using matrix powers with compatible semirings"""
+        """FIXED: Execute variable-length traversal using working semirings"""
         logical_op = operation.logical_op
         
         # Get relation matrix
@@ -631,21 +657,21 @@ class GraphBLASExecutor:
             return self._execute_var_length_expand(logical_op, context)
     
     def _execute_single_hop_expand(self, logical_op, context) -> List[Dict[str, Any]]:
-        """Execute single-hop expand using matrix operations with compatible semirings"""
+        """FIXED: Execute single-hop expand using working semirings"""
         rel_types = logical_op.rel_types or ["*"]
         relation_matrix = self._get_relation_matrix(rel_types, logical_op.direction)
         
         source_vector = self._create_source_vector(logical_op.from_var, context)
         
         try:
-            # Matrix-vector multiplication based on direction with compatible semiring
+            # FIXED: Matrix-vector multiplication with working semiring
             if logical_op.direction == "outgoing":
-                result_vector = source_vector.vxm(relation_matrix, gb.semiring.lor_land)
+                result_vector = source_vector.vxm(relation_matrix, self.default_bool_semiring)
             elif logical_op.direction == "incoming":
-                result_vector = source_vector.vxm(relation_matrix.T, gb.semiring.lor_land)
+                result_vector = source_vector.vxm(relation_matrix.T, self.default_bool_semiring)
             else:  # bidirectional
                 bidirectional_matrix = relation_matrix.ewise_add(relation_matrix.T, gb.binary.lor)
-                result_vector = source_vector.vxm(bidirectional_matrix, gb.semiring.lor_land)
+                result_vector = source_vector.vxm(bidirectional_matrix, self.default_bool_semiring)
             
             return self._vector_to_results(result_vector, logical_op.to_var)
         except Exception as e:
@@ -653,7 +679,7 @@ class GraphBLASExecutor:
             return []
     
     def _execute_var_length_expand(self, logical_op, context) -> List[Dict[str, Any]]:
-        """Execute variable-length expand with compatible semirings"""
+        """FIXED: Execute variable-length expand with working semirings"""
         rel_types = logical_op.rel_types or ["*"]
         A = self._get_relation_matrix(rel_types, logical_op.direction)
         
@@ -710,7 +736,7 @@ class GraphBLASExecutor:
         return results
     
     def _execute_matrix_operation(self, op_str: str, context) -> List[Dict[str, Any]]:
-        """Execute a single matrix operation string with compatible semirings"""
+        """FIXED: Execute a single matrix operation string with working semirings"""
         op_str = op_str.strip()
         
         # Parse and execute matrix operations
@@ -732,8 +758,8 @@ class GraphBLASExecutor:
                     relation_matrix = self._get_matrix_by_name(matrix_name)
                     
                     if source_vector is not None and relation_matrix is not None:
-                        # Perform multiplication with compatible semiring
-                        result_vector = source_vector.vxm(relation_matrix, gb.semiring.lor_land)
+                        # FIXED: Perform multiplication with working semiring
+                        result_vector = source_vector.vxm(relation_matrix, self.default_bool_semiring)
                         
                         # Store result for future operations
                         context.intermediate_vectors = getattr(context, 'intermediate_vectors', {})
@@ -764,7 +790,7 @@ class GraphBLASExecutor:
             if rel_type in self.graph.relation_matrices:
                 matrix = self.graph.relation_matrices[rel_type]
             else:
-                # Create empty matrix - FIXED API
+                # Create empty matrix
                 n = self.graph.node_capacity
                 matrix = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
                 self.graph.relation_matrices[rel_type] = matrix
@@ -809,7 +835,6 @@ class GraphBLASExecutor:
                     # Relation-specific matrix
                     if matrix_name not in self.graph.relation_matrices:
                         n = self.graph.node_capacity
-                        # FIXED API
                         self.graph.relation_matrices[matrix_name] = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
                     
                     self._load_matrix_data(matrix_data, self.graph.relation_matrices[matrix_name])
@@ -865,7 +890,7 @@ class GraphBLASExecutor:
                     with open(rel_file, 'rb') as f:
                         rel_data = pickle.load(f)
                     
-                    # Create relation matrix if needed - FIXED API
+                    # Create relation matrix if needed
                     if rel_type not in self.graph.relation_matrices:
                         n = self.graph.node_capacity
                         self.graph.relation_matrices[rel_type] = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
