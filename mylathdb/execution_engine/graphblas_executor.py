@@ -343,26 +343,37 @@ class GraphBLASExecutor:
         if not self.is_available():
             logger.warning("GraphBLAS not available for edge loading - skipping")
             return
-            
+
         logger.info(f"Loading {len(edges)} edges into GraphBLAS matrices")
-        
+
         # Group edges by relationship type
         edges_by_type = {}
+        
+        # Create a local mapping for string IDs to integer indices
+        node_id_to_index = {}
+        next_index = 0
+
         for edge in edges:
             if len(edge) >= 3:
                 src_id, rel_type, dest_id = edge[:3]
-                
+
                 if rel_type not in edges_by_type:
                     edges_by_type[rel_type] = []
+
+                # Get or create integer index for source ID
+                if src_id not in node_id_to_index:
+                    node_id_to_index[src_id] = next_index
+                    next_index += 1
+                src_idx = node_id_to_index[src_id]
+
+                # Get or create integer index for destination ID
+                if dest_id not in node_id_to_index:
+                    node_id_to_index[dest_id] = next_index
+                    next_index += 1
+                dest_idx = node_id_to_index[dest_id]
                 
-                # Convert IDs to integers for matrix indexing
-                try:
-                    src_idx = int(src_id) - 1  # Convert to 0-based indexing
-                    dest_idx = int(dest_id) - 1
-                    edges_by_type[rel_type].append((src_idx, dest_idx))
-                except ValueError:
-                    logger.warning(f"Could not convert edge IDs to integers: {src_id}, {dest_id}")
-        
+                edges_by_type[rel_type].append((src_idx, dest_idx))
+
         # Load each relationship type into its matrix
         for rel_type, edge_list in edges_by_type.items():
             try:
@@ -370,29 +381,28 @@ class GraphBLASExecutor:
                 if rel_type not in self.graph.relation_matrices:
                     n = self.graph.node_capacity
                     self.graph.relation_matrices[rel_type] = gb.Matrix(gb.dtypes.BOOL, nrows=n, ncols=n)
-                
+
                 matrix = self.graph.relation_matrices[rel_type]
-                
+
                 # Add edges to matrix
                 for src, dest in edge_list:
                     if 0 <= src < matrix.nrows and 0 <= dest < matrix.ncols:
                         matrix[src, dest] = True
-                
+
                 # Also add to main adjacency matrix
                 for src, dest in edge_list:
                     if 0 <= src < self.graph.adjacency_matrix.nrows and 0 <= dest < self.graph.adjacency_matrix.ncols:
                         self.graph.adjacency_matrix[src, dest] = True
-                
+
                 logger.debug(f"Loaded {len(edge_list)} edges for relationship {rel_type}")
-                
+
             except Exception as e:
                 logger.error(f"Failed to load edges for {rel_type}: {e}")
-        
+
         # Update statistics
         self.graph.edge_count += len(edges)
-        
-        logger.info(f"Successfully loaded edges into {len(edges_by_type)} relation matrices")
-    
+
+        logger.info(f"Successfully loaded edges into {len(edges_by_type)} relation matrices")    
     def load_graph_data(self, graph_data):
         """Load graph data into GraphBLAS"""
         if not self.is_available():

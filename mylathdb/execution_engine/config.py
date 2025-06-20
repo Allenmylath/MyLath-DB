@@ -1,8 +1,8 @@
-# mylathdb/execution_engine/config.py - FIXED VERSION
+# mylathdb/execution_engine/config.py - COMPLETE FIXED VERSION
 
 """
 Fixed Configuration for MyLathDB Execution Engine
-Provides proper initialization support for testing
+Provides proper initialization support with ALL required attributes
 """
 
 import os
@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any
 @dataclass
 class MyLathDBExecutionConfig:
     """
-    FIXED: Configuration class with proper initialization support
+    COMPLETE FIXED: Configuration class with ALL required attributes
     """
     
     # Redis Configuration
@@ -37,7 +37,17 @@ class MyLathDBExecutionConfig:
     BATCH_SIZE: int = field(default_factory=lambda: int(os.getenv('MYLATH_BATCH_SIZE', '1000')))
     MAX_MEMORY_USAGE: str = field(default_factory=lambda: os.getenv('MYLATH_MAX_MEMORY', '2GB'))
     QUERY_TIMEOUT: float = field(default_factory=lambda: float(os.getenv('MYLATH_QUERY_TIMEOUT', '300.0')))
-    MAX_EXECUTION_TIME: float = field(default_factory=lambda: float(os.getenv('MYLATH_MAX_EXECUTION_TIME', '300.0')))  # ADD THIS LINE
+    MAX_EXECUTION_TIME: float = field(default_factory=lambda: float(os.getenv('MYLATH_MAX_EXECUTION_TIME', '300.0')))
+    
+    # CRITICAL FIX: Add missing ENABLE_CACHING attribute that tests expect
+    ENABLE_CACHING: bool = field(default_factory=lambda: os.getenv('MYLATH_ENABLE_CACHING', 'true').lower() == 'true')
+    
+    # Matrix and Graph settings
+    NODE_CREATION_BUFFER: int = field(default_factory=lambda: int(os.getenv('MYLATH_NODE_BUFFER', '10000')))
+    EDGE_CREATION_BUFFER: int = field(default_factory=lambda: int(os.getenv('MYLATH_EDGE_BUFFER', '50000')))
+    ENABLE_MATRIX_PERSISTENCE: bool = field(default_factory=lambda: os.getenv('MYLATH_MATRIX_PERSIST', 'false').lower() == 'true')
+    MATRIX_PERSISTENCE_PATH: str = field(default_factory=lambda: os.getenv('MYLATH_MATRIX_PATH', './mylathdb_matrices'))
+    
     # Logging and Debug
     LOG_LEVEL: str = field(default_factory=lambda: os.getenv('MYLATH_LOG_LEVEL', 'INFO'))
     ENABLE_QUERY_LOGGING: bool = field(default_factory=lambda: os.getenv('MYLATH_QUERY_LOG', 'false').lower() == 'true')
@@ -89,6 +99,7 @@ class MyLathDBExecutionConfig:
             AUTO_START_REDIS=False,
             DEVELOPMENT_MODE=True,
             ENABLE_DEBUG_OPERATIONS=True,
+            ENABLE_CACHING=True,  # FIXED: Ensure this is set
             LOG_LEVEL='DEBUG',
             BATCH_SIZE=100,  # Smaller batches for testing
             QUERY_TIMEOUT=30.0,  # Shorter timeout for tests
@@ -114,6 +125,7 @@ class MyLathDBExecutionConfig:
             AUTO_START_REDIS=False,
             DEVELOPMENT_MODE=False,
             ENABLE_DEBUG_OPERATIONS=False,
+            ENABLE_CACHING=True,  # FIXED: Ensure this is set
             LOG_LEVEL='INFO',
             BATCH_SIZE=10000,  # Larger batches for production
             QUERY_TIMEOUT=300.0,  # 5 minute timeout
@@ -169,7 +181,7 @@ class MyLathDBExecutionConfig:
     
     def __repr__(self) -> str:
         """String representation of configuration"""
-        return f"MyLathDBExecutionConfig(redis={self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB})"
+        return f"MyLathDBExecutionConfig(redis={self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}, caching={self.ENABLE_CACHING})"
 
 
 # Alternative simple configuration class for backward compatibility
@@ -198,6 +210,14 @@ class SimpleMyLathDBConfig:
         self.BATCH_SIZE = kwargs.get('BATCH_SIZE', 1000)
         self.MAX_MEMORY_USAGE = kwargs.get('MAX_MEMORY_USAGE', '2GB')
         self.QUERY_TIMEOUT = kwargs.get('QUERY_TIMEOUT', 300.0)
+        self.MAX_EXECUTION_TIME = kwargs.get('MAX_EXECUTION_TIME', 300.0)
+        
+        # CRITICAL FIX: Add missing ENABLE_CACHING
+        self.ENABLE_CACHING = kwargs.get('ENABLE_CACHING', True)
+        
+        # Additional settings
+        self.NODE_CREATION_BUFFER = kwargs.get('NODE_CREATION_BUFFER', 10000)
+        self.EDGE_CREATION_BUFFER = kwargs.get('EDGE_CREATION_BUFFER', 50000)
         
         # Logging and debug
         self.LOG_LEVEL = kwargs.get('LOG_LEVEL', 'INFO')
@@ -238,5 +258,3 @@ def create_production_config(**kwargs) -> MyLathDBExecutionConfig:
 def create_simple_config(**kwargs) -> SimpleMyLathDBConfig:
     """Create simple configuration for backward compatibility"""
     return SimpleMyLathDBConfig(**kwargs)
-
-
