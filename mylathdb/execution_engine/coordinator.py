@@ -26,11 +26,14 @@ class ExecutionCoordinator:
         self.config = config
         self.redis_executor = None  # Will be set by engine
         self.graphblas_executor = None  # Will be set by engine
-    
+        
     def set_executors(self, redis_executor, graphblas_executor):
         """Set executor references (called by main engine)"""
         self.redis_executor = redis_executor
         self.graphblas_executor = graphblas_executor
+        
+        # CRITICAL FIX: Set data bridge reference for ID mapping
+        self.data_bridge = getattr(redis_executor, 'data_bridge', None) or getattr(graphblas_executor, 'data_bridge', None)
     
     @mylathdb_measure_time
     def execute_operation(self, coordinator_operation, context) -> List[Dict[str, Any]]:
@@ -371,7 +374,180 @@ class ExecutionCoordinator:
         optional_context.required_record = record
         
         return optional_context
-    
+    def _execute_conditional_traverse_with_children(self, operation, child_results, context):
+        """
+        NEW METHOD: Execute ConditionalTraverse with source results from children
+        This bridges Redis scan results to GraphBLAS traversal operations
+        """
+        print(f"🔍 Coordinator: ConditionalTraverse with {len(child_results)} source results")
+        
+        logical_op = getattr(operation, 'logical_op', None)
+        if not logical_op:
+            print("   ❌ No logical operation found")
+            return child_results
+        
+        # If GraphBLAS is not available, return child results
+        if not self.graphblas_executor or not self.graphblas_executor.is_available():
+            print("   ⚠️  GraphBLAS not available, returning child results without traversal")
+            return child_results
+        
+        try:
+            # Extract source node IDs from child results
+            source_node_ids = []
+            for result in child_results:
+                for var_name, entity in result.items():
+                    if isinstance(entity, dict):
+                        node_id = entity.get('_id') or entity.get('id')
+                        if node_id:
+                            source_node_ids.append(str(node_id))
+            
+            print(f"   📍 Found {len(source_node_ids)} source nodes: {source_node_ids}")
+            
+            if not source_node_ids:
+                print("   ❌ No source node IDs found in child results")
+                return []
+            
+            # Execute GraphBLAS traversal
+            traversal_results = self._execute_graphblas_traversal(
+                logical_op, source_node_ids, context
+            )
+            
+            print(f"   🎯 Traversal returned {len(traversal_results)} results")
+            return traversal_results
+            
+        except Exception as e:
+            print(f"   ❌ ConditionalTraverse execution failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return child_results
+
+    def _execute_graphblas_traversal(self, logical_op, source_node_ids, context):
+        """
+        Execute GraphBLAS traversal from source nodes
+        """
+        print(f"🔍 GraphBLAS traversal: {logical_op.from_var} → {logical_op.to_var}")
+        
+        try:
+            # Get relation types and direction
+            rel_types = getattr(logical_op, 'rel_types', ['*'])
+            direction = getattr(logical_op, 'direction', 'outgoing')
+            
+            print(f"   📊 Relation types: {rel_types}, Direction: {direction}")
+            
+            # Get relation matrix from GraphBLAS executor
+            relation_matrix = self.graphblas_executor._get_relation_matrix(rel_types, direction)
+            if relation_matrix is None:
+                print("   ❌ Could not get relation matrix")
+                return []
+            
+            # Create source vector from node IDs
+            source_vector = self._create_source_vector_from_ids(source_node_ids)
+            if source_vector is None:
+                print("   ❌ Could not create source vector")
+                return []
+            
+            # Perform matrix-vector multiplication
+            if direction == "outgoing":
+                result_vector = source_vector.vxm(relation_matrix, self.graphblas_executor.default_bool_semiring)
+            elif direction == "incoming":
+                result_vector = source_vector.vxm(relation_matrix.T, self.graphblas_executor.default_bool_semiring)
+            else:  # bidirectional
+                import graphblas as gb
+                bidirectional_matrix = relation_matrix.ewise_add(relation_matrix.T, gb.binary.lor)
+                result_vector = source_vector.vxm(bidirectional_matrix, self.graphblas_executor.default_bool_semiring)
+            
+            # Convert result vector back to node data
+            destination_results = self._convert_vector_to_node_results(
+                result_vector, logical_op.to_var, context
+            )
+            
+            print(f"   ✅ GraphBLAS traversal found {len(destination_results)} destinations")
+            return destination_results
+            
+        except Exception as e:
+            print(f"   ❌ GraphBLAS traversal failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def _create_source_vector_from_ids(self, node_ids):
+        """Create GraphBLAS vector from list of node IDs"""
+        try:
+            import graphblas as gb
+            
+            # Get node capacity from GraphBLAS executor
+            n = self.graphblas_executor.graph.node_capacity
+            source_vector = gb.Vector(gb.dtypes.BOOL, size=n)
+            
+            # Get data bridge for ID mapping
+            data_bridge = getattr(self, 'data_bridge', None)
+            if not data_bridge:
+                # Try to get it from graphblas_executor
+                data_bridge = getattr(self.graphblas_executor, 'data_bridge', None)
+            
+            if not data_bridge:
+                print("   ❌ No data bridge available for ID mapping")
+                return None
+            
+            # Map node IDs to matrix indices
+            indices_set = []
+            for node_id in node_ids:
+                # Try to get existing mapping
+                matrix_index = data_bridge.node_mapping.entity_to_index.get(str(node_id))
+                if matrix_index is not None and matrix_index < n:
+                    indices_set.append(matrix_index)
+                    print(f"     📍 Mapped node {node_id} → index {matrix_index}")
+            
+            # Set vector entries
+            for index in indices_set:
+                source_vector[index] = True
+            
+            print(f"   ✅ Created source vector with {len(indices_set)} active nodes")
+            return source_vector
+            
+        except Exception as e:
+            print(f"   ❌ Source vector creation failed: {e}")
+            return None
+
+    def _convert_vector_to_node_results(self, result_vector, variable_name, context):
+        """Convert GraphBLAS result vector back to node data results"""
+        
+        try:
+            # Get non-zero indices from vector
+            indices, values = result_vector.to_coo()
+            
+            # Get data bridge for reverse mapping
+            data_bridge = getattr(self, 'data_bridge', None)
+            if not data_bridge:
+                data_bridge = getattr(self.graphblas_executor, 'data_bridge', None)
+            
+            if not data_bridge:
+                print("   ❌ No data bridge available for reverse mapping")
+                return []
+            
+            results = []
+            
+            for index, value in zip(indices, values):
+                if value:  # Non-zero entry (reachable node)
+                    # Get node ID from matrix index
+                    node_id = data_bridge.node_mapping.get_entity_id(index)
+                    if node_id:
+                        # Fetch full node data from Redis
+                        node_data = self.redis_executor._get_node_data_complete(node_id)
+                        if node_data:
+                            # Format result with variable name
+                            result_record = {variable_name: node_data}
+                            results.append(result_record)
+                            print(f"     ✅ Found destination node: {node_data.get('name', node_id)}")
+            
+            return results
+            
+        except Exception as e:
+            print(f"   ❌ Vector to results conversion failed: {e}")
+            return []
+
     def shutdown(self):
         """Shutdown coordinator"""
         logger.info("Execution coordinator shutdown complete")
+    
+

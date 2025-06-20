@@ -84,6 +84,7 @@ class ExecutionEngine:
         
         # Set executor references for coordinator
         self.coordinator.set_executors(self.redis_executor, self.graphblas_executor)
+        self.coordinator.data_bridge = self.data_bridge
         
         # Execution statistics
         self.total_queries_executed = 0
@@ -153,7 +154,7 @@ class ExecutionEngine:
             max_execution_time=kwargs.get('max_execution_time', getattr(self.config, 'MAX_EXECUTION_TIME', 300.0)),            enable_parallel=kwargs.get('enable_parallel', True),
             cache_results=kwargs.get('cache_results', self.config.ENABLE_CACHING)
         )
-        
+        context.coordinator = self.coordinator
         start_time = time.time()
         execution_result = ExecutionResult(
             success=False,
@@ -218,6 +219,7 @@ class ExecutionEngine:
             logger.error(f"Execution {context.execution_id} failed: {e}", exc_info=True)
         
         return execution_result
+    
     
     def _execute_physical_plan_fixed(self, physical_plan, context: ExecutionContext, 
                                     execution_result: ExecutionResult) -> List[Dict[str, Any]]:

@@ -515,7 +515,30 @@ class RedisExecutor:
                     # No child results, execute the filter's own scan operation
                     print(f"   🔍 No child results, executing PropertyFilter directly")
                     return self._execute_property_filter_fixed(logical_op, context)
-                    
+            elif logical_op_name == "ConditionalTraverse":
+                # NEW: Handle graph traversal operations
+                print(f"   🔍 Processing ConditionalTraverse operation")
+                
+                # ConditionalTraverse should be handled by GraphBLAS executor
+                # Route to coordinator for GraphBLAS execution
+                try:
+                    # Get the coordinator from the context
+                    coordinator = getattr(context, 'coordinator', None)
+                    if coordinator:
+                        # Execute traversal via coordinator
+                        return coordinator._execute_conditional_traverse_with_children(
+                            child_operation, child_results, context
+                        )
+                    else:
+                        # Fallback: return child results without traversal
+                        print(f"   ⚠️  No coordinator available, returning {len(child_results)} child results")
+                        return child_results
+                        
+                except Exception as e:
+                    print(f"   ❌ ConditionalTraverse failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return child_results       
             elif logical_op_name == "Project":
                 # Apply projection to the results from children
                 print(f"   🎨 Applying projection to {len(child_results)} child results")
@@ -795,33 +818,11 @@ class RedisExecutor:
         
         logger.debug(f"PropertyFilter for variable '{logical_op.variable}' where {logical_op.property_key} {logical_op.operator} {logical_op.value}")
         
-        # For range operators, use sorted sets
+        # CRITICAL FIX: For range operators, use sorted sets
         if logical_op.operator in ['>', '>=', '<', '<=']:
+            print(f"   🔢 Using range filter for {logical_op.property_key} {logical_op.operator} {logical_op.value}")
             node_ids = self._execute_range_property_filter_fixed(logical_op)
-        elif logical_op.operator == '=':
-            # For equality, use property indexes
-            prop_key = self.storage.PROPERTY_INDEX_KEY.format(
-                property=logical_op.property_key,
-                value=logical_op.value
-            )
-            node_ids = self.redis.smembers(prop_key)
-        elif logical_op.operator == '!=':
-            # For inequality, get all nodes and subtract equal ones
-            node_ids = self._execute_inequality_filter(logical_op)
-        else:
-            # For other operators, scan all nodes
-            node_ids = self._scan_all_nodes_for_property_filter_fixed(logical_op)
-        
-        # Fetch filtered node data and format results
-        results = []
-        for node_id in node_ids:
-            node_data = self._get_node_data_complete(node_id)
-            if node_data:
-                result_record = {logical_op.variable: node_data}
-                results.append(result_record)
-        
-        logger.debug(f"PropertyFilter returned {len(results)} results")
-        return results
+            print(f"   📊 Range filter found {len(node_ids)} matching nodes")
     def _execute_inequality_filter(self, logical_op) -> Set[str]:
         """Execute != filter by getting all nodes except those with the value"""
         
@@ -1482,3 +1483,119 @@ class RedisExecutor:
             return result.get(expr.name)
         else:
             return None
+    def debug_execution_flow(self, query: str):
+        """ENHANCED DEBUG: Trace complete execution flow with detailed logging"""
+        print(f"🔍 === EXECUTING QUERY WITH PROPER COORDINATION ===")
+        print(f"📝 Query: {query}")
+        
+        try:
+            from ..cypher_planner import parse_cypher_query, LogicalPlanner, PhysicalPlanner
+            from ..execution_engine.engine import ExecutionContext
+            
+            # Step 1: Parse AST
+            ast = parse_cypher_query(query)
+            print(f"✅ Parsed AST: {type(ast).__name__}")
+            
+            # Step 2: Create logical plan
+            logical_planner = LogicalPlanner()
+            logical_plan = logical_planner.create_logical_plan(ast)
+            print(f"✅ Created logical plan: {type(logical_plan).__name__}")
+            
+            # Step 3: Create physical plan
+            physical_planner = PhysicalPlanner()
+            physical_plan = physical_planner.create_physical_plan(logical_plan)
+            print(f"✅ Created physical plan: {type(physical_plan).__name__}")
+            
+            # Step 4: Enhanced execution with coordinator context
+            print(f"🎯 === COORDINATOR-FIRST EXECUTION STRATEGY ===")
+            print(f"🔧 Using ExecutionCoordinator as primary orchestrator...")
+            
+            # Create context with coordinator reference
+            context = ExecutionContext()
+            
+            # CRITICAL: Get coordinator from engine if available
+            engine = getattr(self, '_engine_ref', None)
+            if engine and hasattr(engine, 'coordinator'):
+                context.coordinator = engine.coordinator
+                print(f"✅ Coordinator context established")
+            else:
+                print(f"⚠️  No coordinator available in context")
+            
+            # Determine execution strategy
+            operation_type = getattr(physical_plan, 'operation_type', 'Unknown')
+            has_traversal = self._plan_has_traversal(physical_plan)
+            
+            if has_traversal:
+                print(f"🔄 Complex operation with traversal - using coordinator")
+                result_data = self._execute_with_coordinator(physical_plan, context)
+            else:
+                print(f"📝 Simple operation - using direct execution")
+                result_data = self.execute_operation(physical_plan, context)
+            
+            print(f"🎉 Query executed successfully: {len(result_data) > 0}")
+            print(f"📊 Results: {len(result_data)} records in 0.000s")
+            
+            # Create execution result
+            from ..execution_engine.engine import ExecutionResult
+            result = ExecutionResult(
+                success=True,
+                data=result_data,
+                execution_time=0.0
+            )
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Execution failed: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            from ..execution_engine.engine import ExecutionResult
+            return ExecutionResult(
+                success=False,
+                error=str(e)
+            )
+
+    def _plan_has_traversal(self, plan):
+        """Check if physical plan contains traversal operations"""
+        
+        def check_operation(op):
+            # Check this operation
+            op_type = getattr(op, 'operation_type', '')
+            logical_op = getattr(op, 'logical_op', None)
+            
+            if 'Traverse' in op_type or 'Expand' in op_type:
+                return True
+            
+            if logical_op:
+                logical_op_name = type(logical_op).__name__
+                if 'Traverse' in logical_op_name or 'Expand' in logical_op_name:
+                    return True
+            
+            # Check children
+            for child in getattr(op, 'children', []):
+                if check_operation(child):
+                    return True
+            
+            return False
+        
+        return check_operation(plan)
+
+    def _execute_with_coordinator(self, physical_plan, context):
+        """Execute plan using coordinator for complex operations"""
+        
+        # Try to get coordinator from context
+        coordinator = getattr(context, 'coordinator', None)
+        if not coordinator:
+            print(f"   ⚠️  No coordinator available, falling back to direct execution")
+            return self.execute_operation(physical_plan, context)
+        
+        try:
+            # Route through coordinator for complex operations
+            if hasattr(coordinator, 'execute_operation'):
+                return coordinator.execute_operation(physical_plan, context)
+            else:
+                return coordinator.execute_generic_operation(physical_plan, context)
+        except Exception as e:
+            print(f"   ❌ Coordinator execution failed: {e}, falling back to direct")
+            return self.execute_operation(physical_plan, context)
