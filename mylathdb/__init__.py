@@ -210,112 +210,6 @@ class MyLathDB:
                 execution_time=0.0
             )
     
-    def _execute_with_coordination(self, physical_plan, parameters=None, graph_data=None, **kwargs):
-        """
-        FIXED: Execute physical plan using ExecutionCoordinator as PRIMARY orchestrator
-        
-        This is the key fix - instead of trying to route operations ourselves,
-        we let the ExecutionCoordinator handle ALL complex coordination patterns.
-        """
-        print("🎯 === COORDINATOR-FIRST EXECUTION STRATEGY ===")
-        
-        # Create execution context with FIXED configuration access
-        context = ExecutionContext(
-            parameters=parameters or {},
-            graph_data=graph_data,
-            max_execution_time=kwargs.get('max_execution_time', 300.0),  # FIXED: Default value
-            enable_parallel=kwargs.get('enable_parallel', True),
-            cache_results=kwargs.get('cache_results', getattr(self.config, 'ENABLE_CACHING', True))  # FIXED: Safe access
-        )
-        
-        # Load graph data if provided
-        if graph_data:
-            self._load_graph_data(graph_data)
-        
-        # THE KEY FIX: Use ExecutionCoordinator for ALL operations
-        print("🔧 Using ExecutionCoordinator as primary orchestrator...")
-        
-        # Check if this is a complex operation that needs coordination
-        if self._requires_coordination(physical_plan):
-            print("✅ Complex operation detected - using ExecutionCoordinator")
-            result_data = self.engine.coordinator.execute_operation(physical_plan, context)
-        else:
-            print("📝 Simple operation - using direct execution")
-            result_data = self.engine._execute_physical_plan_fixed(physical_plan, context, None)
-        
-        # Build execution result
-        execution_result = ExecutionResult(
-            success=True,
-            data=result_data,
-            execution_time=0.0,  # Will be set by the engine
-            execution_plan_summary=f"Executed: {type(physical_plan).__name__}"
-        )
-        
-        return execution_result
-    
-    def _requires_coordination(self, physical_plan) -> bool:
-        """
-        Determine if a physical plan requires ExecutionCoordinator
-        
-        Complex operations that need coordination:
-        - Graph traversals (ConditionalTraverse, Expand)  
-        - Mixed Redis + GraphBLAS operations
-        - OPTIONAL MATCH, EXISTS patterns
-        - Multi-step filtering with property access
-        """
-        from .cypher_planner.physical_planner import (
-            CoordinatorOperation, GraphBLASOperation
-        )
-        
-        # Always use coordinator for coordinator operations
-        if isinstance(physical_plan, CoordinatorOperation):
-            return True
-        
-        # Use coordinator for GraphBLAS operations that need property access
-        if isinstance(physical_plan, GraphBLASOperation):
-            operation_type = getattr(physical_plan, 'operation_type', '')
-            if operation_type in ['ConditionalTraverse', 'Expand', 'VarLenTraverse']:
-                return True
-        
-        # Check logical operation type
-        logical_op = getattr(physical_plan, 'logical_op', None)
-        if logical_op:
-            op_name = type(logical_op).__name__
-            complex_ops = [
-                'ConditionalTraverse', 'ConditionalVarLenTraverse', 
-                'Expand', 'Optional', 'SemiApply', 'Apply'
-            ]
-            if op_name in complex_ops:
-                return True
-        
-        # Check for filter chains that need coordination
-        if self._has_filter_chain(physical_plan):
-            return True
-        
-        # Default to simple execution
-        return False
-    
-    def _has_filter_chain(self, physical_plan) -> bool:
-        """Check if physical plan has a filter chain requiring coordination"""
-        
-        # Look for patterns like: Scan -> Filter -> Project
-        # These often need coordination between Redis scans and filtering
-        
-        def has_filters(op):
-            if hasattr(op, 'logical_op') and op.logical_op:
-                op_name = type(op.logical_op).__name__
-                if 'Filter' in op_name:
-                    return True
-            
-            # Check children
-            for child in getattr(op, 'children', []):
-                if has_filters(child):
-                    return True
-            
-            return False
-        
-        return has_filters(physical_plan)
-    
     def load_graph_data(self, nodes: list = None, edges: list = None, 
                        adjacency_matrices: dict = None):
         """
@@ -367,32 +261,6 @@ class MyLathDB:
             self.engine.graphblas_executor.load_graph_data(graph_data)
             print("✅ Graph data loaded into both Redis and GraphBLAS")
     
-    def _load_graph_data(self, graph_data):
-        """Internal method to load graph data during query execution"""
-        print("📥 Loading graph data for query execution...")
-        
-        # Load into Redis if node/edge data provided
-        if 'nodes' in graph_data:
-            self.engine.redis_executor.load_nodes(graph_data['nodes'])
-        
-        if 'edges' in graph_data:
-            self.engine.redis_executor.load_edges(graph_data['edges'])
-        
-        # Load into GraphBLAS if matrix data provided
-        if 'adjacency_matrices' in graph_data:
-            self.engine.graphblas_executor.load_adjacency_matrices(graph_data['adjacency_matrices'])
-        
-        if 'edges' in graph_data:
-            # Also create matrices from edge data
-            self.engine.graphblas_executor.load_edges_as_matrices(graph_data['edges'])
-        
-        # Sync data between systems
-        if hasattr(self.engine, 'data_bridge'):
-            try:
-                self.engine.data_bridge.sync_redis_to_graphblas(incremental=True)
-            except Exception as e:
-                print(f"⚠️  Data sync failed: {e}")
-    
     def get_statistics(self) -> dict:
         """Get database and execution statistics"""
         engine_stats = self.engine.get_execution_statistics()
@@ -421,94 +289,7 @@ class MyLathDB:
         self.engine.shutdown()
     
     # =============================================================================
-    # FIXED PRIVATE HELPER METHODS (SAME AS BEFORE)
-    # =============================================================================
-    
-    def _load_nodes_to_redis_fixed(self, nodes: list):
-        """FIXED: Load nodes into Redis with proper label storage and indexing"""
-        if not self.engine.redis_executor.redis:
-            return
-        
-        redis_client = self.engine.redis_executor.redis
-        
-        for node in nodes:
-            node_id = node.get('id')
-            if not node_id:
-                continue
-            
-            # Store node properties (excluding id and _labels)
-            node_key = f"node:{node_id}"
-            properties = {}
-            for key, value in node.items():
-                if key not in ['id', '_id', '_labels']:
-                    if isinstance(value, list):
-                        properties[key] = ",".join(map(str, value))
-                    else:
-                        properties[key] = str(value)
-            
-            # Store properties if any exist
-            if properties:
-                redis_client.hset(node_key, mapping=properties)
-            
-            # Store labels properly with indexes
-            labels = node.get('_labels', [])
-            if labels:
-                # Store labels in a separate set for this node
-                labels_key = f"node_labels:{node_id}"
-                redis_client.sadd(labels_key, *labels)
-                
-                # Create label indexes for efficient label-based queries
-                for label in labels:
-                    redis_client.sadd(f"label:{label}", node_id)
-            
-            # Create property indexes for efficient property-based queries
-            for key, value in properties.items():
-                # Create property value index
-                redis_client.sadd(f"prop:{key}:{value}", node_id)
-                
-                # Create sorted property index for numeric values (for range queries)
-                try:
-                    numeric_value = float(value)
-                    redis_client.zadd(f"sorted_prop:{key}", {node_id: numeric_value})
-                except (ValueError, TypeError):
-                    # Not a numeric value, skip sorted index
-                    pass
-    
-    def _load_edges_to_redis(self, edges: list):
-        """Load edges into Redis storage"""
-        if not self.engine.redis_executor.redis:
-            return
-        
-        redis_client = self.engine.redis_executor.redis
-        
-        for edge in edges:
-            if len(edge) >= 3:
-                src_id, rel_type, dest_id = edge[:3]
-                
-                # Generate edge ID
-                edge_id = f"{src_id}_{rel_type}_{dest_id}"
-                
-                # Store edge endpoints
-                redis_client.set(f"edge_endpoints:{edge_id}", f"{src_id}|{dest_id}|{rel_type}")
-                
-                # Create relationship indexes
-                redis_client.sadd(f"out:{src_id}:{rel_type}", edge_id)
-                redis_client.sadd(f"in:{dest_id}:{rel_type}", edge_id)
-                redis_client.sadd(f"rel:{rel_type}", edge_id)
-    
-    def _group_edges_by_type(self, edges: list) -> dict:
-        """Group edges by relationship type"""
-        grouped = {}
-        for edge in edges:
-            if len(edge) >= 3:
-                src_id, rel_type, dest_id = edge[:3]
-                if rel_type not in grouped:
-                    grouped[rel_type] = []
-                grouped[rel_type].append((src_id, dest_id))
-        return grouped
-    
-    # =============================================================================
-    # ALL DEBUG METHODS THAT TESTS EXPECT
+    # DEBUG METHODS FOR TESTING AND TROUBLESHOOTING
     # =============================================================================
     
     def debug_redis_state(self):
@@ -605,6 +386,56 @@ class MyLathDB:
             import traceback
             traceback.print_exc()
             return None
+    
+    def debug_relationship_mapping(self):
+        """NEW: Debug method to check relationship data consistency"""
+        print("🔍 === RELATIONSHIP MAPPING DEBUG ===")
+        
+        # Check Redis relationships
+        redis_relationships = []
+        redis_client = self.engine.redis_executor.redis
+        if redis_client:
+            for key in redis_client.scan_iter(match="edge_endpoints:*"):
+                endpoints = redis_client.get(key)
+                if endpoints:
+                    parts = endpoints.split('|')
+                    if len(parts) >= 3:
+                        src_id, dest_id, rel_type = parts[0], parts[1], parts[2]
+                        redis_relationships.append((src_id, dest_id, rel_type))
+        
+        print(f"📊 Redis relationships: {redis_relationships}")
+        
+        # Check GraphBLAS mapping
+        if hasattr(self.engine, 'data_bridge') and self.engine.data_bridge:
+            node_mapping = self.engine.data_bridge.node_mapping.entity_to_index
+            print(f"📊 Node ID mapping: {dict(list(node_mapping.items())[:10])}")
+            
+            # Check specific nodes from test
+            for node_id in ["1", "2", "4", "6"]:
+                matrix_index = node_mapping.get(node_id)
+                node_data = self.engine.redis_executor._get_node_data_complete(node_id)
+                name = node_data.get('name', 'Unknown') if node_data else 'Not Found'
+                print(f"   Node {node_id} ({name}) → Matrix Index {matrix_index}")
+        
+        # Check GraphBLAS matrices
+        if self.engine.graphblas_executor.is_available():
+            knows_matrix = self.engine.graphblas_executor.graph.relation_matrices.get('KNOWS')
+            if knows_matrix:
+                try:
+                    indices, values = knows_matrix.to_coo()
+                    gb_relationships = [(i, j) for i, j in zip(indices, values) if j]
+                    print(f"📊 GraphBLAS KNOWS relationships (matrix indices): {gb_relationships}")
+                    
+                    # Map back to node IDs
+                    data_bridge = self.engine.data_bridge
+                    gb_node_relationships = []
+                    for i, j in gb_relationships:
+                        src_id = data_bridge.node_mapping.get_entity_id(i)
+                        dest_id = data_bridge.node_mapping.get_entity_id(j)
+                        gb_node_relationships.append((src_id, dest_id, 'KNOWS'))
+                    print(f"📊 GraphBLAS KNOWS relationships (node IDs): {gb_node_relationships}")
+                except Exception as e:
+                    print(f"   ❌ Failed to extract GraphBLAS relationships: {e}")
     
     def test_projection_fix(self):
         """FIXED: Test if the projection fix is working"""
@@ -713,6 +544,320 @@ class MyLathDB:
         else:
             print("❌ Coordination fix needs more work")
             return False
+    
+    def debug_where_clause_processing(self, query: str):
+        """NEW: Debug WHERE clause processing in queries"""
+        print(f"🔍 === WHERE CLAUSE DEBUG FOR: {query} ===")
+        
+        try:
+            # Parse AST to check WHERE clause
+            ast = parse_cypher_query(query)
+            
+            if hasattr(ast, 'match_clause') and ast.match_clause:
+                if hasattr(ast.match_clause, 'where_clause') and ast.match_clause.where_clause:
+                    print(f"✅ WHERE clause found: {ast.match_clause.where_clause}")
+                    print(f"   Condition: {ast.match_clause.where_clause.condition}")
+                else:
+                    print("❌ No WHERE clause found in AST")
+            
+            # Check logical plan
+            logical_plan = self.logical_planner.create_logical_plan(ast)
+            print(f"📊 Logical plan type: {type(logical_plan).__name__}")
+            
+            # Check for filters in the plan
+            def check_for_filters(plan, depth=0):
+                indent = "  " * depth
+                plan_type = type(plan).__name__
+                print(f"{indent}- {plan_type}")
+                
+                if 'Filter' in plan_type:
+                    print(f"{indent}  🎯 FILTER FOUND!")
+                
+                # Check children
+                for child in getattr(plan, 'children', []):
+                    check_for_filters(child, depth + 1)
+            
+            print("📋 Logical plan structure:")
+            check_for_filters(logical_plan)
+            
+        except Exception as e:
+            print(f"❌ WHERE clause debug failed: {e}")
+    
+    def validate_test_data_consistency(self):
+        """NEW: Validate that loaded test data is consistent between Redis and GraphBLAS"""
+        print("🔍 === TEST DATA CONSISTENCY VALIDATION ===")
+        
+        # Expected test relationships from the test file
+        expected_relationships = [
+            ("1", "2", "KNOWS"),      # Alice knows Bob
+            ("1", "4", "KNOWS"),      # Alice knows Diana  
+            ("2", "3", "KNOWS"),      # Bob knows Charlie
+            ("2", "4", "WORKS_WITH"), # Bob works with Diana
+            ("3", "1", "MANAGES"),    # Charlie manages Alice
+            ("3", "4", "MANAGES"),    # Charlie manages Diana
+            ("4", "5", "MENTORS"),    # Diana mentors Eve
+            ("6", "3", "MANAGES"),    # Frank manages Charlie
+        ]
+        
+        print(f"📋 Expected relationships: {expected_relationships}")
+        
+        # Check Redis data
+        redis_relationships = []
+        redis_client = self.engine.redis_executor.redis
+        if redis_client:
+            for key in redis_client.scan_iter(match="edge_endpoints:*"):
+                endpoints = redis_client.get(key)
+                if endpoints:
+                    parts = endpoints.split('|')
+                    if len(parts) >= 3:
+                        src_id, dest_id, rel_type = parts[0], parts[1], parts[2]
+                        redis_relationships.append((src_id, dest_id, rel_type))
+        
+        print(f"📊 Redis relationships: {redis_relationships}")
+        
+        # Check for missing relationships
+        missing_in_redis = []
+        for expected in expected_relationships:
+            if expected not in redis_relationships:
+                missing_in_redis.append(expected)
+        
+        if missing_in_redis:
+            print(f"❌ Missing in Redis: {missing_in_redis}")
+        else:
+            print("✅ All expected relationships found in Redis")
+        
+        # Check GraphBLAS data consistency
+        if hasattr(self.engine, 'data_bridge') and self.engine.data_bridge:
+            print("\n📊 GraphBLAS Mapping Check:")
+            for src_id, dest_id, rel_type in expected_relationships:
+                src_index = self.engine.data_bridge.node_mapping.entity_to_index.get(src_id)
+                dest_index = self.engine.data_bridge.node_mapping.entity_to_index.get(dest_id)
+                print(f"   {src_id}→{dest_id} ({rel_type}): {src_index}→{dest_index}")
+                
+                if src_index is None or dest_index is None:
+                    print(f"   ❌ Missing mapping for {src_id}→{dest_id}")
+    
+    # =============================================================================
+    # PRIVATE HELPER METHODS
+    # =============================================================================
+    
+    def _execute_with_coordination(self, physical_plan, parameters=None, graph_data=None, **kwargs):
+        """
+        FIXED: Execute physical plan using ExecutionCoordinator as PRIMARY orchestrator
+        
+        This is the key fix - instead of trying to route operations ourselves,
+        we let the ExecutionCoordinator handle ALL complex coordination patterns.
+        """
+        print("🎯 === COORDINATOR-FIRST EXECUTION STRATEGY ===")
+        
+        # Create execution context with FIXED configuration access
+        context = ExecutionContext(
+            parameters=parameters or {},
+            graph_data=graph_data,
+            max_execution_time=kwargs.get('max_execution_time', 300.0),  # FIXED: Default value
+            enable_parallel=kwargs.get('enable_parallel', True),
+            cache_results=kwargs.get('cache_results', getattr(self.config, 'ENABLE_CACHING', True))  # FIXED: Safe access
+        )
+        
+        # 🔥 CRITICAL FIX: Add coordinator to context
+        context.coordinator = self.engine.coordinator
+        
+        # Load graph data if provided
+        if graph_data:
+            self._load_graph_data(graph_data)
+        
+        # THE KEY FIX: Use ExecutionCoordinator for ALL operations
+        print("🔧 Using ExecutionCoordinator as primary orchestrator...")
+        
+        # Check if this is a complex operation that needs coordination
+        if self._requires_coordination(physical_plan):
+            print("✅ Complex operation detected - using ExecutionCoordinator")
+            result_data = self.engine.coordinator.execute_operation(physical_plan, context)
+        else:
+            print("📝 Simple operation - using direct execution")
+            result_data = self.engine._execute_physical_plan_fixed(physical_plan, context, None)
+        
+        # Build execution result
+        execution_result = ExecutionResult(
+            success=True,
+            data=result_data,
+            execution_time=0.0,  # Will be set by the engine
+            execution_plan_summary=f"Executed: {type(physical_plan).__name__}"
+        )
+        
+        return execution_result
+    
+    def _requires_coordination(self, physical_plan) -> bool:
+        """
+        Determine if a physical plan requires ExecutionCoordinator
+        
+        Complex operations that need coordination:
+        - Graph traversals (ConditionalTraverse, Expand)  
+        - Mixed Redis + GraphBLAS operations
+        - OPTIONAL MATCH, EXISTS patterns
+        - Multi-step filtering with property access
+        """
+        from .cypher_planner.physical_planner import (
+            CoordinatorOperation, GraphBLASOperation
+        )
+        
+        # Always use coordinator for coordinator operations
+        if isinstance(physical_plan, CoordinatorOperation):
+            return True
+        
+        # Use coordinator for GraphBLAS operations that need property access
+        if isinstance(physical_plan, GraphBLASOperation):
+            operation_type = getattr(physical_plan, 'operation_type', '')
+            if operation_type in ['ConditionalTraverse', 'Expand', 'VarLenTraverse']:
+                return True
+        
+        # Check logical operation type
+        logical_op = getattr(physical_plan, 'logical_op', None)
+        if logical_op:
+            op_name = type(logical_op).__name__
+            complex_ops = [
+                'ConditionalTraverse', 'ConditionalVarLenTraverse', 
+                'Expand', 'Optional', 'SemiApply', 'Apply'
+            ]
+            if op_name in complex_ops:
+                return True
+        
+        # Check for filter chains that need coordination
+        if self._has_filter_chain(physical_plan):
+            return True
+        
+        # Default to simple execution
+        return False
+    
+    def _has_filter_chain(self, physical_plan) -> bool:
+        """Check if physical plan has a filter chain requiring coordination"""
+        
+        # Look for patterns like: Scan -> Filter -> Project
+        # These often need coordination between Redis scans and filtering
+        
+        def has_filters(op):
+            if hasattr(op, 'logical_op') and op.logical_op:
+                op_name = type(op.logical_op).__name__
+                if 'Filter' in op_name:
+                    return True
+            
+            # Check children
+            for child in getattr(op, 'children', []):
+                if has_filters(child):
+                    return True
+            
+            return False
+        
+        return has_filters(physical_plan)
+    
+    def _load_graph_data(self, graph_data):
+        """Internal method to load graph data during query execution"""
+        print("📥 Loading graph data for query execution...")
+        
+        # Load into Redis if node/edge data provided
+        if 'nodes' in graph_data:
+            self.engine.redis_executor.load_nodes(graph_data['nodes'])
+        
+        if 'edges' in graph_data:
+            self.engine.redis_executor.load_edges(graph_data['edges'])
+        
+        # Load into GraphBLAS if matrix data provided
+        if 'adjacency_matrices' in graph_data:
+            self.engine.graphblas_executor.load_adjacency_matrices(graph_data['adjacency_matrices'])
+        
+        if 'edges' in graph_data:
+            # Also create matrices from edge data
+            self.engine.graphblas_executor.load_edges_as_matrices(graph_data['edges'])
+        
+        # Sync data between systems
+        if hasattr(self.engine, 'data_bridge'):
+            try:
+                self.engine.data_bridge.sync_redis_to_graphblas(incremental=True)
+            except Exception as e:
+                print(f"⚠️  Data sync failed: {e}")
+    
+    def _load_nodes_to_redis_fixed(self, nodes: list):
+        """FIXED: Load nodes into Redis with proper label storage and indexing"""
+        if not self.engine.redis_executor.redis:
+            return
+        
+        redis_client = self.engine.redis_executor.redis
+        
+        for node in nodes:
+            node_id = node.get('id')
+            if not node_id:
+                continue
+            
+            # Store node properties (excluding id and _labels)
+            node_key = f"node:{node_id}"
+            properties = {}
+            for key, value in node.items():
+                if key not in ['id', '_id', '_labels']:
+                    if isinstance(value, list):
+                        properties[key] = ",".join(map(str, value))
+                    else:
+                        properties[key] = str(value)
+            
+            # Store properties if any exist
+            if properties:
+                redis_client.hset(node_key, mapping=properties)
+            
+            # Store labels properly with indexes
+            labels = node.get('_labels', [])
+            if labels:
+                # Store labels in a separate set for this node
+                labels_key = f"node_labels:{node_id}"
+                redis_client.sadd(labels_key, *labels)
+                
+                # Create label indexes for efficient label-based queries
+                for label in labels:
+                    redis_client.sadd(f"label:{label}", node_id)
+            
+            # Create property indexes for efficient property-based queries
+            for key, value in properties.items():
+                # Create property value index
+                redis_client.sadd(f"prop:{key}:{value}", node_id)
+                
+                # Create sorted property index for numeric values (for range queries)
+                try:
+                    numeric_value = float(value)
+                    redis_client.zadd(f"sorted_prop:{key}", {node_id: numeric_value})
+                except (ValueError, TypeError):
+                    # Not a numeric value, skip sorted index
+                    pass
+    
+    def _load_edges_to_redis(self, edges: list):
+        """Load edges into Redis storage"""
+        if not self.engine.redis_executor.redis:
+            return
+        
+        redis_client = self.engine.redis_executor.redis
+        
+        for edge in edges:
+            if len(edge) >= 3:
+                src_id, rel_type, dest_id = edge[:3]
+                
+                # Generate edge ID
+                edge_id = f"{src_id}_{rel_type}_{dest_id}"
+                
+                # Store edge endpoints
+                redis_client.set(f"edge_endpoints:{edge_id}", f"{src_id}|{dest_id}|{rel_type}")
+                
+                # Create relationship indexes
+                redis_client.sadd(f"out:{src_id}:{rel_type}", edge_id)
+                redis_client.sadd(f"in:{dest_id}:{rel_type}", edge_id)
+                redis_client.sadd(f"rel:{rel_type}", edge_id)
+    
+    def _group_edges_by_type(self, edges: list) -> dict:
+        """Group edges by relationship type"""
+        grouped = {}
+        for edge in edges:
+            if len(edge) >= 3:
+                src_id, rel_type, dest_id = edge[:3]
+                if rel_type not in grouped:
+                    grouped[rel_type] = []
+                grouped[rel_type].append((src_id, dest_id))
+        return grouped
 
 
 # =============================================================================

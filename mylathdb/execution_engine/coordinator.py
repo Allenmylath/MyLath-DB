@@ -493,7 +493,18 @@ class ExecutionCoordinator:
             indices_set = []
             for node_id in node_ids:
                 # Try to get existing mapping
-                matrix_index = data_bridge.node_mapping.entity_to_index.get(str(node_id))
+                # 🔥 FIX: Consistent string conversion and debug mapping
+                node_id_str = str(node_id)
+                matrix_index = data_bridge.node_mapping.entity_to_index.get(node_id_str)
+                print(f"     🔍 Mapping lookup: '{node_id_str}' → {matrix_index}")
+                if matrix_index is not None and matrix_index < n:
+                    indices_set.append(matrix_index)
+                    print(f"     📍 Mapped node {node_id} → index {matrix_index}")
+                else:
+                    print(f"     ❌ No valid mapping for node {node_id}")
+                    # Try to debug available mappings
+                    available_keys = list(data_bridge.node_mapping.entity_to_index.keys())[:5]
+                    print(f"     📋 Available mappings sample: {available_keys}")
                 if matrix_index is not None and matrix_index < n:
                     indices_set.append(matrix_index)
                     print(f"     📍 Mapped node {node_id} → index {matrix_index}")

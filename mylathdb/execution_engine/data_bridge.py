@@ -328,6 +328,8 @@ class DataBridge:
                         # Get matrix indices
                         src_index = self.node_mapping.get_or_create_index(src_id)
                         dest_index = self.node_mapping.get_or_create_index(dest_id)
+                        # Debug mapping
+                        print(f"     🔗 Edge mapping: {src_id}→{src_index}, {dest_id}→{dest_index}")
                         
                         # Set matrix entry
                         self._set_matrix_entry(relation_matrix, src_index, dest_index, True)
@@ -486,7 +488,7 @@ class DataBridge:
             try:
                 import graphblas as gb
                 n = self.graphblas_executor.graph.node_capacity
-                self.graphblas_executor.graph.label_matrices[label] = gb.Matrix.new(
+                self.graphblas_executor.graph.label_matrices[label] = gb.Matrix(
                     gb.dtypes.BOOL, nrows=n, ncols=n
                 )
             except Exception as e:

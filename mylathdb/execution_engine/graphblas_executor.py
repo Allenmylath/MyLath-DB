@@ -948,20 +948,22 @@ class GraphBLASExecutor:
         logger.info("Clearing GraphBLAS matrices")
         
         try:
-            # Clear core matrices
-            if self.graph.adjacency_matrix:
+            # 🔥 FIX: Use 'is not None' instead of boolean evaluation
+            if self.graph.adjacency_matrix is not None:
                 self.graph.adjacency_matrix.clear()
             
-            if self.graph.node_labels_matrix:
+            if self.graph.node_labels_matrix is not None:
                 self.graph.node_labels_matrix.clear()
             
             # Clear relation matrices
             for matrix in self.graph.relation_matrices.values():
-                matrix.clear()
+                if matrix is not None:  # 🔥 FIX: Add None check
+                    matrix.clear()
             
-            # Clear label matrices
+            # Clear label matrices  
             for matrix in self.graph.label_matrices.values():
-                matrix.clear()
+                if matrix is not None:  # 🔥 FIX: Add None check
+                    matrix.clear()
             
             # Reset statistics
             self.graph.node_count = 0
